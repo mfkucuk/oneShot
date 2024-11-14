@@ -43,8 +43,20 @@ class oneShot {
                 document.body.appendChild(this.canvas);
             }
             this.ctx = this.canvas.getContext('2d');
+            this.ctx.font = '20px dejavu, monospace';
         
         });
+
+        this.variableManager = {
+            variables: new Map(),
+            set: function(name, value) {
+                const type = typeof value;
+                this.variables.set(name, { type, value });
+            },
+            get: function(name) {
+                return this.variables.get(name);
+            }
+        }
     }
 
     onPrint = (message) => {
@@ -78,8 +90,50 @@ class oneShot {
             } else {
                 throw new SyntaxError('FILL can only have 0 or 4 parameters');
             }
+        },
+        TEXT: (args) => {
+            if (args.charCount(',') != 2) {
+                throw new SyntaxError('Usage: TEXT x, y, string');
+            } 
+
+            let [x, y, text] = args.split(',');
+            x = parseFloat(x.trim());
+            y = parseFloat(y.trim());
+            text = parseMessage(text);
+
+            this.ctx.fillText(text, x, y);
+        },
+        FONT: (args) => {
+            if (args.charCount(',') != 1) {
+                throw new SyntaxError('Usage: FONT fontSize, fontFamily');
+            }
+
+            let [fontSize, fontFamily] = args.split(',');
+            fontSize = parseFloat(fontSize.trim());
+            fontFamily = parseMessage(fontFamily);
+
+            this.ctx.font = `${fontSize}px ${fontFamily}`;
+        },
+        LET: (args) => {
+            let [variableName, expression] = args.split('=');
+            if (!variableName) {
+                throw new SyntaxError('Usage: LET X | LET X = 5');
+            }
+
+            variableName = variableName.trim();
+            
+            if (!expression) {
+                this.variableManager.set(variableName, undefined);
+                return;
+            }
+
+            expression = expression.trim();
+
+            this.variableManager.set(variableName, Number(expression));
         }
     }
+
+    
 
     processLine = async function(line) {
         line = line.trim();
