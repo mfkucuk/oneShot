@@ -1,9 +1,38 @@
 <!doctype html>
 <html>
-  <head>
-    <title>oneShot</title>
-  </head>
-  <body>
-      <script src='oneShot.js'></script>
-  </body>
+	<head>
+    	<title>oneShot</title>
+
+		<script src='oneShot.js'></script>
+	</head>
+	<body>
+
+		<canvas id="canv"></canvas>
+		
+		<pre></pre>
+
+		<script>
+			const os = new oneShot('canv');
+
+			const code = 
+			`
+				PRINT "Wait one second..."
+				SLEEP 1000
+				PRINT "Hello, world!"
+				SLEEP 2000
+				COLOR "red"
+				FILL
+				SLEEP 1000
+				COLOR "green"
+				FILL 20,20,20,50
+				DEBUG "Green rectangle"
+			`;
+
+			os.onPrint = (message) => {
+				document.querySelector('pre').innerText += `${message}\n`;
+			}
+
+			os.run(code);
+		</script>
+	</body>
 </html>

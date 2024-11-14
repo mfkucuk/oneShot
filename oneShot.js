@@ -4,24 +4,6 @@
  * written in pure vanilla JavaScript. 
  */
 
-const root = document.getElementsByTagName('body')[0];
-
-const canvas2d = document.createElement('canvas');
-const ctx = canvas2d.getContext('2d');
-
-root.appendChild(canvas2d);
-
-
-
-const code = 
-`
-    PRINT "Wait one second..."
-    SLEEP 1000
-    PRINT "Hello, world!"
-    SLEEP 2000
-    COLOR "red"
-    FILL
-`;
 
 /**
  * @param {char} char
@@ -43,10 +25,6 @@ function parseMessage(line) {
     return message;
 }
 
-function onPrint(message) {
-    console.log(message);
-}
-
 /**
  * @param {float} ms
  */
@@ -54,48 +32,71 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * @param {string} src
- */
-async function runCode(src) {
-    const lines = src.split('\n');
-    
-    for (let line of lines) {
-        if (line.trim() == '') {
-            continue;
-        }
+class oneShot {
+
+    constructor(canvasId) {
+        document.addEventListener('DOMContentLoaded', () => {
+            if (canvasId) {
+                this.canvas = document.getElementById(canvasId);
+            } else {
+                this.canvas = document.createElement('canvas');
+                document.body.appendChild(this.canvas);
+            }
+            this.ctx = this.canvas.getContext('2d');
         
-        line = line.trim();
+        });
+    }
 
-        const firstWhitespaceIndex = line.indexOf(' ');
+    onPrint = function(message) {
+        console.log(message);
+    }
 
-        let token = '';
-        if (firstWhitespaceIndex == -1) {
-            token = line.substring(0);
-        } else {
-            token = line.substring(0, firstWhitespaceIndex);        
-        }
+    run = async function(src) {
+        const lines = src.split('\n');
+    
+        for (let line of lines) {
+            if (line.trim() == '') {
+                continue;
+            }
+            
+            line = line.trim();
 
-        if (token == 'PRINT') {
-            const message = parseMessage(line);
-            onPrint(message);
-        } else if (token == 'DEBUG') {
-            const message = parseMessage(line);
-            console.log(message);
-        } else if (token == 'SLEEP') {
-            const ms = parseFloat(line.substring(firstWhitespaceIndex).trim());
-            await sleep(ms);
-        } else if (token == 'COLOR') {
-            const color = parseMessage(line);
-            ctx.fillStyle = color;
-        } else if (token == 'FILL') {
-            if (line.trim().length == 4) {
-                ctx.fillRect(0, 0, canvas2d.width, canvas2d.height);
+            const firstWhitespaceIndex = line.indexOf(' ');
+
+            let token = '';
+            if (firstWhitespaceIndex == -1) {
+                token = line.substring(0);
+            } else {
+                token = line.substring(0, firstWhitespaceIndex);        
+            }
+
+            if (token == 'PRINT') {
+                const message = parseMessage(line);
+                this.onPrint(message);
+            } else if (token == 'DEBUG') {
+                const message = parseMessage(line);
+                console.log(message);
+            } else if (token == 'SLEEP') {
+                const ms = parseFloat(line.substring(firstWhitespaceIndex).trim());
+                await sleep(ms);
+            } else if (token == 'COLOR') {
+                const color = parseMessage(line);
+                this.ctx.fillStyle = color;
+            } else if (token == 'FILL') {
+                if (line.trim().length == 4) {
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                } else {
+                    if (line.charCount(',') != 3) {
+                        throw new SyntaxError('FILL can only have 0 or 4 parameters');
+                    }
+                    let [x, y, w, h] = line.substring(4).split(',');
+                    x = parseInt(x.trim()); 
+                    y = parseInt(y.trim()); 
+                    w = parseInt(w.trim()); 
+                    h = parseInt(h.trim());
+                    this.ctx.fillRect(x, y, w, h); 
+                }
             }
         }
     }
 }
-
-runCode(code);
-
-
