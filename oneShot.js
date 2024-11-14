@@ -47,55 +47,57 @@ class oneShot {
         });
     }
 
-    onPrint = function(message) {
+    onPrint = (message) => {
         console.log(message);
+    }
+
+    commandHandlers = {
+        PRINT: (args) => {
+            const message = parseMessage(args);
+            this.onPrint(message);
+        },
+        DEBUG: (args) => {
+            const message = parseMessage(args);
+            console.log(message);
+        },
+        SLEEP: async (args) => {
+            const ms = parseFloat(args);
+            await sleep(ms);
+        },
+        COLOR: (args) => {
+            const color = parseMessage(args);
+            this.ctx.fillStyle = color;
+        },
+        FILL: (args) => {
+            const numbers = args.split(',').map(arg => arg.trim());
+            if (numbers.length === 1 && numbers[0] === '') { // No parameters
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            } else if (numbers.length === 4) {
+                const [x, y, w, h] = numbers.map(Number);
+                this.ctx.fillRect(x, y, w, h);
+            } else {
+                throw new SyntaxError('FILL can only have 0 or 4 parameters');
+            }
+        }
+    }
+
+    processLine = async function(line) {
+        line = line.trim();
+        const [command, ...args] = line.split(' ');
+        const handler = this.commandHandlers[command];
+        if (handler) {
+            await handler(args.join(' '));
+        } else {
+            throw new Error(`Unknown command: ${command}`);
+        }
     }
 
     run = async function(src) {
         const lines = src.split('\n');
     
         for (let line of lines) {
-            if (line.trim() == '') {
-                continue;
-            }
-            
-            line = line.trim();
-
-            const firstWhitespaceIndex = line.indexOf(' ');
-
-            let token = '';
-            if (firstWhitespaceIndex == -1) {
-                token = line.substring(0);
-            } else {
-                token = line.substring(0, firstWhitespaceIndex);        
-            }
-
-            if (token == 'PRINT') {
-                const message = parseMessage(line);
-                this.onPrint(message);
-            } else if (token == 'DEBUG') {
-                const message = parseMessage(line);
-                console.log(message);
-            } else if (token == 'SLEEP') {
-                const ms = parseFloat(line.substring(firstWhitespaceIndex).trim());
-                await sleep(ms);
-            } else if (token == 'COLOR') {
-                const color = parseMessage(line);
-                this.ctx.fillStyle = color;
-            } else if (token == 'FILL') {
-                if (line.trim().length == 4) {
-                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                } else {
-                    if (line.charCount(',') != 3) {
-                        throw new SyntaxError('FILL can only have 0 or 4 parameters');
-                    }
-                    let [x, y, w, h] = line.substring(4).split(',');
-                    x = parseInt(x.trim()); 
-                    y = parseInt(y.trim()); 
-                    w = parseInt(w.trim()); 
-                    h = parseInt(h.trim());
-                    this.ctx.fillRect(x, y, w, h); 
-                }
+            if (line.trim() !== '') {
+                await this.processLine(line);
             }
         }
     }
