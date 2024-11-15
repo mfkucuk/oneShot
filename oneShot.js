@@ -12,19 +12,6 @@ String.prototype.charCount = function(char) {
     return this.split(char).length - 1;
 }
 
-function parseMessage(line) {
-    if (line.charCount('"') != 2) {
-        throw new SyntaxError('Invalid number of quotation marks');
-    }
-
-    const startQuoteIndex = line.indexOf('"');
-    const endQuoteIndex = line.indexOf('"', startQuoteIndex + 1);
-            
-    const message = line.substring(startQuoteIndex + 1, endQuoteIndex);
-
-    return message;
-}
-
 /**
  * @param {float} ms
  */
@@ -59,17 +46,35 @@ class oneShot {
         }
     }
 
+    parseExpression(expression) {
+
+        if (expression.charCount('"') == 0) {
+            return this.variableManager.get(expression.trim()).value;        
+        } 
+    
+        if (expression.charCount('"') != 2) {
+            throw new SyntaxError('Invalid number of quotation marks');
+        }
+    
+        const startQuoteIndex = expression.indexOf('"');
+        const endQuoteIndex = expression.indexOf('"', startQuoteIndex + 1);
+                
+        const message = expression.substring(startQuoteIndex + 1, endQuoteIndex);
+    
+        return message;
+    }
+
     onPrint = (message) => {
         console.log(message);
     }
 
     commandHandlers = {
         PRINT: (args) => {
-            const message = parseMessage(args);
+            const message = this.parseExpression(args);
             this.onPrint(message);
         },
         DEBUG: (args) => {
-            const message = parseMessage(args);
+            const message = this.parseExpression(args);
             console.log(message);
         },
         SLEEP: async (args) => {
@@ -77,7 +82,7 @@ class oneShot {
             await sleep(ms);
         },
         COLOR: (args) => {
-            const color = parseMessage(args);
+            const color = this.parseExpression(args);
             this.ctx.fillStyle = color;
         },
         FILL: (args) => {
@@ -99,7 +104,7 @@ class oneShot {
             let [x, y, text] = args.split(',');
             x = parseFloat(x.trim());
             y = parseFloat(y.trim());
-            text = parseMessage(text);
+            text = this.parseExpression(text);
 
             this.ctx.fillText(text, x, y);
         },
@@ -110,7 +115,7 @@ class oneShot {
 
             let [fontSize, fontFamily] = args.split(',');
             fontSize = parseFloat(fontSize.trim());
-            fontFamily = parseMessage(fontFamily);
+            fontFamily = this.parseExpression(fontFamily);
 
             this.ctx.font = `${fontSize}px ${fontFamily}`;
         },
