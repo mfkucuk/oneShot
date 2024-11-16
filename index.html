@@ -12,22 +12,12 @@
 		<pre></pre>
 
 		<script>
-			const os = new oneShot('canv');
+			const os = new OneShot('canv');
 
             const code = 
 			`
-				PRINT "Wait one second..."
-				SLEEP 1000
-				PRINT "Hello, world!"
-				FILL
-				SLEEP 1000
-				COLOR "green"
-				FILL 20,20,20,50
-                SLEEP 1000
-                COLOR "lightblue"
-                TEXT 50, 50, "oneShot"
-                LET X = 5
-				PRINT X
+				# This is a comment
+				"Hello, world"
 			`;
 
 			os.onPrint = (message) => {
