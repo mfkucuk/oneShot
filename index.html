@@ -1,23 +1,40 @@
 <!doctype html>
 <html>
 	<head>
-    	<title>oneShot</title>
+    	<title>OneShot</title>
 
 		<script src='oneShot.js'></script>
 	</head>
-	<body>
-
-		<canvas id="canv"></canvas>
-		
+	<body>	
+		<canvas id="oneShotCanvas"></canvas>	
 		<pre></pre>
 
 		<script>
-			const os = new OneShot('canv');
+			const os = new OneShot('oneShotCanvas');
+
+
 
             const code = 
 			`
 				# This is a comment
-				"Hello, world"
+				WINDOW 400, 400
+				SLEEP 1000
+				COLOR "red"
+				FILL ALL
+				SLEEP 1000
+				COLOR "green"
+				FILL 20, 20, 100, 100
+				SLEEP 1000
+				COLOR "blue"
+
+				LET XPos
+				LET YPos = 200
+
+				XPos = 300
+
+				TEXT XPos, YPos, 2 <> 1
+
+				PRINT "End of program..."
 			`;
 
 			os.onPrint = (message) => {
