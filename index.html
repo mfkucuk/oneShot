@@ -12,8 +12,6 @@
 		<script>
 			const os = new OneShot('oneShotCanvas');
 
-
-
             const code = 
 			`
 				# This is a comment
@@ -22,19 +20,15 @@
 				COLOR "red"
 				FILL ALL
 				SLEEP 1000
-				COLOR "green"
-				FILL 20, 20, 100, 100
-				SLEEP 1000
-				COLOR "blue"
-
-				LET XPos
-				LET YPos = 200
-
-				XPos = 300
-
-				TEXT XPos, YPos, 2 <> 1
-
-				PRINT "End of program..."
+				IF (3 <> 3) THEN
+					COLOR "green"
+					FILL 20, 20, 100, 100
+					FILL 200, 200, 100, 100
+				ELSE
+					COLOR "blue"
+					FILL 20, 20, 100, 100
+					FILL 200, 200, 100, 100
+				END
 			`;
 
 			os.onPrint = (message) => {

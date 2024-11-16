@@ -560,15 +560,15 @@ class BlockStatement extends Statement {
     }
 
     async interpret(environment) {
-        await this.#executeBlock(this.statements, new Environment(environment));
+        await this.executeBlock(new Environment(environment));
     }
 
     /**
      * @param {Statement[]} statements 
      * @param {Environment} environment 
      */
-    async #executeBlock(statements, environment) {
-        for (const statement of statements) {
+    async executeBlock(environment) {
+        for (const statement of this.statements) {
             await statement.interpret(environment);
         }
     }
@@ -798,6 +798,38 @@ class SleepStatement extends Statement {
     }
 }
 
+class IfStatement extends Statement {
+
+    conditionExpression;
+    ifBranch;
+    elseBranch;
+
+    /**
+     * @param {Expression} conditionExpression 
+     * @param {Statement[]} ifBranch 
+     * @param {Statement[]} elseBranch 
+     */
+    constructor(conditionExpression, ifBranch, elseBranch) {
+        super();
+
+        this.conditionExpression = conditionExpression;
+        this.ifBranch = ifBranch;
+        this.elseBranch = elseBranch;
+    }
+
+    interpret(environment) {
+        if (this.conditionExpression.interpret(environment)) {
+            for (const statement of this.ifBranch) {
+                statement.interpret(environment);
+            }
+        } else if (!this.conditionExpression.interpret(environment)) {
+            for (const statement of this.elseBranch) {
+                statement.interpret(environment);
+            }
+        }
+    }
+}
+
 class Parser {
     #tokens;
     #current;
@@ -878,6 +910,10 @@ class Parser {
             return new BlockStatement(this.#block());
         }
 
+        if (this.#match(TokenType.IF)) {
+            return this.#ifBlock();
+        }
+
         return this.#expressionStatement();
     }
 
@@ -954,6 +990,30 @@ class Parser {
         const sleepExpression = this.#expression();
 
         return new SleepStatement(sleepExpression);
+    }
+
+    #ifBlock() {
+        this.#match(TokenType.LEFT_P);
+        const condition = this.#expression();
+        this.#match(TokenType.RIGHT_P);
+
+        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'IF' statement`);
+        
+        const ifBranch = [];
+        while (!this.#check(TokenType.END) && !this.#check(TokenType.ELSE) && !this.#isAtEnd()) {
+            ifBranch.push(this.#declaration());
+        }
+
+        const elseBranch = [];
+        if (this.#match(TokenType.ELSE)) {
+            while (!this.#check(TokenType.END) && !this.#isAtEnd()) {
+                elseBranch.push(this.#declaration());
+            }
+        }
+        
+        this.#consume(TokenType.END, `Expected 'END' to end 'IF' statement`);
+
+        return new IfStatement(condition, ifBranch, elseBranch);
     }
 
     #expression() {
