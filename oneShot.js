@@ -48,6 +48,22 @@ class Sprite {
     sizeX;
     sizeY;
 
+    /**
+     * @type {Frame[]}
+     */
+    frames;
+
+    constructor() {
+        this.frames = [];
+    }
+
+}
+
+class Frame {
+
+    colorData;
+    pixelData;
+
 }
 
 // Beyond here is interpreter related
@@ -77,7 +93,7 @@ const TokenType = {
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
     FILL: 0, TEXT: 0, SLEEP: 0, UPDATE: 0,
-    SPRITE: 0, SIZE: 0, DRAW: 0,
+    SPRITE: 0, SIZE: 0, DRAW: 0, FRAME: 0,
 
     EOF: 0
 };
@@ -147,7 +163,8 @@ class Scanner {
         ['UPDATE', TokenType.UPDATE],
         ['SPRITE', TokenType.SPRITE],
         ['SIZE', TokenType.SIZE],
-        ['DRAW', TokenType.DRAW]
+        ['DRAW', TokenType.DRAW],
+        ['FRAME', TokenType.FRAME]
     ]);
 
     #source;
@@ -1082,7 +1099,31 @@ class SpriteBlock extends BlockStatement {
     }
 }
 
+class FrameBlock extends BlockStatement {
+
+    frameNameExpression;
+
+    /**
+     * @param {Statement[]} statements 
+     * @param {Expression} frameNameExpression 
+     */
+    constructor(statements, frameNameExpression) {
+        super(statements);
+
+        this.frameNameExpression = frameNameExpression;
+    }
+
+    async interpret(environment) {
+        const currentSprite = environment.currentSprite;
+
+        if (!currentSprite) {
+            throw new Error('FRAME block can only be used in SPRITE block');
+        }
+    }
+}
+
 class Parser {
+
     #tokens;
     #current;
     #callbacks;
@@ -1188,6 +1229,10 @@ class Parser {
 
         if (this.#match(TokenType.SPRITE)) {
             return this.#spriteBlock();
+        }
+
+        if (this.#match(TokenType.FRAME)) {
+            return this.#frameBlock();
         }
 
         return this.#expressionStatement();
@@ -1363,6 +1408,15 @@ class Parser {
         }
 
         return new SpriteBlock(this.#block(), name);
+    }
+
+    #frameBlock() {
+        let name = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            name = this.#expression();
+        }
+
+        return new FrameBlock(this.#block(), name);
     }
 
     #expression() {
