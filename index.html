@@ -20,9 +20,12 @@
 				COLOR "lightgrey"
 				FILL ALL
 
-				UPDATE 1 THEN
-					PRINT "SUP"
+				SPRITE "Square"
+					SIZE 12, 12
 				END
+
+				COLOR "red"
+				DRAW 30, 30, "Square"
 			`;
 
 			oneShot.onPrint = (message) => {

@@ -42,6 +42,15 @@ function isTruthy(object) {
     return true;
 }
 
+// OneShot classes
+class Sprite {
+    
+    sizeX;
+    sizeY;
+
+}
+
+// Beyond here is interpreter related
 /**
  * All the allowed tokens in OneShot
  */
@@ -68,6 +77,7 @@ const TokenType = {
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
     FILL: 0, TEXT: 0, SLEEP: 0, UPDATE: 0,
+    SPRITE: 0, SIZE: 0, DRAW: 0,
 
     EOF: 0
 };
@@ -134,7 +144,10 @@ class Scanner {
         ['FILL', TokenType.FILL],
         ['TEXT', TokenType.TEXT],
         ['SLEEP', TokenType.SLEEP],
-        ['UPDATE', TokenType.UPDATE]
+        ['UPDATE', TokenType.UPDATE],
+        ['SPRITE', TokenType.SPRITE],
+        ['SIZE', TokenType.SIZE],
+        ['DRAW', TokenType.DRAW]
     ]);
 
     #source;
@@ -842,6 +855,67 @@ class SleepStatement extends Statement {
     }
 }
 
+class SizeStatement extends Statement {
+
+    sizeXExpression;
+    sizeYExpression;
+
+    /**
+     * @param {Expression} sizeXExpression 
+     * @param {Expression} sizeYExpression 
+     */
+    constructor(sizeXExpression, sizeYExpression) {
+        super();
+
+        this.sizeXExpression = sizeXExpression;
+        this.sizeYExpression = sizeYExpression;
+    }
+
+    async interpret(environment) {
+        const currentSprite = environment.currentSprite;
+
+        if (!currentSprite) {
+            throw new Error('SIZE can only be used in SPRITE block');
+        }
+
+        const sizeXValue = this.sizeXExpression.interpret(environment);
+        const sizeYValue = this.sizeYExpression.interpret(environment);
+
+        currentSprite.sizeX = sizeXValue;
+        currentSprite.sizeY = sizeYValue;
+    }
+}
+
+class DrawStatement extends Statement {
+
+    xExpression;
+    yExpression;
+    nameExpression;
+
+    /**
+     * @param {Expression} xExpression 
+     * @param {Expression} yExpression 
+     * @param {Expression} nameExpression 
+     */
+    constructor(xExpression, yExpression, nameExpression) {
+        super();
+
+        this.xExpression = xExpression;
+        this.yExpression = yExpression;
+        this.nameExpression = nameExpression;
+    }
+
+    async interpret(environment) {
+        const x = this.xExpression.interpret(environment);
+        const y = this.yExpression.interpret(environment);
+        const name = this.nameExpression.interpret(environment);
+
+        const sprite = environment.getSprite(name);
+        
+        ctx.fillRect(x, y, sprite.sizeX * 4, sprite.sizeY * 4);
+    }
+}
+
 class IfStatement extends Statement {
 
     conditionExpression;
@@ -932,7 +1006,7 @@ class ForBlock extends BlockStatement {
 
         let condition = this.condition.interpret(environment);
         while (isTruthy(condition)) {
-            this.executeBlock(new Environment(environment));
+            await this.executeBlock(new Environment(environment));
 
             this.increment.interpret(environment);
 
@@ -982,6 +1056,29 @@ class UpdateBlock extends BlockStatement {
         requestAnimationFrame(executeFrame);
 
         return null;
+    }
+}
+
+class SpriteBlock extends BlockStatement {
+
+    nameExpression;
+
+    /**
+     * @param {Statement[]} statements 
+     * @param {Expression} nameExpression 
+     */
+    constructor(statements, nameExpression) {
+        super(statements);
+        
+        this.nameExpression = nameExpression;
+    }
+
+    async interpret(environment) {
+        const nameValue = this.nameExpression.interpret();
+
+        environment.addNewSprite(nameValue);
+
+        await this.executeBlock(new Environment(environment));
     }
 }
 
@@ -1061,6 +1158,14 @@ class Parser {
             return this.#sleepStatement();
         }
 
+        if (this.#match(TokenType.SIZE)) {
+            return this.#sizeStatement();
+        }
+
+        if (this.#match(TokenType.DRAW)) {
+            return this.#drawStatement();
+        }
+
         if (this.#match(TokenType.THEN)) {
             return new BlockStatement(this.#block());
         }
@@ -1079,6 +1184,10 @@ class Parser {
 
         if (this.#match(TokenType.UPDATE)) {
             return this.#updateBlock();
+        }
+
+        if (this.#match(TokenType.SPRITE)) {
+            return this.#spriteBlock();
         }
 
         return this.#expressionStatement();
@@ -1159,6 +1268,27 @@ class Parser {
         return new SleepStatement(sleepExpression);
     }
 
+    #sizeStatement() {
+        const sizeX = this.#expression();
+        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+
+        const sizeY = this.#expression();
+
+        return new SizeStatement(sizeX, sizeY);
+    }
+
+    #drawStatement() {
+        const xExpression = this.#expression();
+        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+        
+        const yExpression = this.#expression();
+        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+        
+        const nameExpression = this.#expression();
+
+        return new DrawStatement(xExpression, yExpression, nameExpression);
+    }
+
     #ifStatement() {
         this.#match(TokenType.LEFT_P);
         const condition = this.#expression();
@@ -1222,6 +1352,17 @@ class Parser {
         this.#consume(TokenType.THEN, `Expected 'THEN' to start 'UPDATE' block`);
 
         return new UpdateBlock(this.#block(), fps);
+    }
+
+    #spriteBlock() {
+        let name = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            name = this.#expression();
+        } else {
+            throw new Error('SPRITE must have a name: SPRITE "exampleSprite"');
+        }
+
+        return new SpriteBlock(this.#block(), name);
     }
 
     #expression() {
@@ -1406,17 +1547,35 @@ class Parser {
 }
 
 class Environment {
+
+    #enclosing;
+
+    // primitives
     #values = new Map();
-    enclosing;
+
+    // sprites
+    #sprites = new Map();
+    #currentSpriteName = '';
+
+    get currentSprite() {
+        if (this.#sprites.has(this.#currentSpriteName)) {
+            return this.#sprites.get(this.#currentSpriteName);
+        }
+
+        if (this.#enclosing != null) {
+            return this.#enclosing.currentSprite;
+        }
+    }
+
 
     /**
      * @param {Environment} enclosing 
      */
     constructor(enclosing) {
         if (enclosing) {
-            this.enclosing = enclosing;
+            this.#enclosing = enclosing;
         } else {
-            this.enclosing = null;
+            this.#enclosing = null;
         }
     }
 
@@ -1432,8 +1591,8 @@ class Environment {
             return this.#values.get(name.lexeme);
         }
 
-        if (this.enclosing != null) {
-            return this.enclosing.get(name);
+        if (this.#enclosing != null) {
+            return this.#enclosing.get(name);
         }
 
         throw new Error(`Undefined variable: ${name.lexeme}`);
@@ -1449,12 +1608,29 @@ class Environment {
             return;
         }
 
-        if (this.enclosing != null) {
-            this.enclosing.assign(name, value);
+        if (this.#enclosing != null) {
+            this.#enclosing.assign(name, value);
             return;
         }
 
         throw new Error(`Undefined variable: ${name.lexeme}`);
+    }
+
+    addNewSprite(name) {
+        this.#currentSpriteName = name;
+        this.#sprites.set(name, new Sprite());
+    }
+
+    getSprite(name) {
+        if (this.#sprites.has(name)) {
+            return this.#sprites.get(name);
+        }
+
+        if (this.#enclosing != null) {
+            return this.#enclosing.getSprite(name);
+        }
+
+        throw new Error(`Undefined sprite: ${name}`);
     }
 }
 
