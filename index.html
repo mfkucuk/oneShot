@@ -10,32 +10,26 @@
 		<pre></pre>
 
 		<script>
-			const os = new OneShot('oneShotCanvas');
+			const oneShot = new OneShot('oneShotCanvas');
 
             const code = 
 			`
 				# This is a comment
 				WINDOW 400, 400
-				SLEEP 1000
-				COLOR "red"
+
+				COLOR "lightgrey"
 				FILL ALL
-				SLEEP 1000
-				IF (3 <> 3) THEN
-					COLOR "green"
-					FILL 20, 20, 100, 100
-					FILL 200, 200, 100, 100
-				ELSE
-					COLOR "blue"
-					FILL 20, 20, 100, 100
-					FILL 200, 200, 100, 100
+
+				UPDATE 1 THEN
+					PRINT "SUP"
 				END
 			`;
 
-			os.onPrint = (message) => {
+			oneShot.onPrint = (message) => {
                 document.querySelector('pre').innerText += `> ${message}\n`;
 			}
 
-			os.run(code);
+			oneShot.run(code);
 		</script>
 	</body>
 </html>

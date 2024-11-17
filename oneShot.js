@@ -26,11 +26,28 @@ function sleep(ms) {
 }
 
 /**
+ * Returns if a object is truthy or falsy in OneShot
+ * @param {any} object 
+ * @returns {boolean}
+ */
+function isTruthy(object) {
+    if (object == null) {
+        return false;
+    }
+
+    if (typeof object == 'boolean') {
+        return object;
+    }
+
+    return true;
+}
+
+/**
  * All the allowed tokens in OneShot
  */
 const TokenType = {
     // Single character token types
-    LEFT_P: 0, RIGHT_P: 0,
+    LEFT_P: 0, RIGHT_P: 0, COLON: 0,
     COMMA: 0, MINUS: 0, PLUS: 0, 
     SLASH: 0, STAR: 0, HASHTAG: 0,
     
@@ -50,7 +67,7 @@ const TokenType = {
 
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
-    FILL: 0, TEXT: 0, SLEEP: 0,
+    FILL: 0, TEXT: 0, SLEEP: 0, UPDATE: 0,
 
     EOF: 0
 };
@@ -116,7 +133,8 @@ class Scanner {
         ['COLOR', TokenType.COLOR],
         ['FILL', TokenType.FILL],
         ['TEXT', TokenType.TEXT],
-        ['SLEEP', TokenType.SLEEP]
+        ['SLEEP', TokenType.SLEEP],
+        ['UPDATE', TokenType.UPDATE]
     ]);
 
     #source;
@@ -151,6 +169,7 @@ class Scanner {
         switch (c) {
             case '(': this.#addToken(TokenType.LEFT_P); break;
             case ')': this.#addToken(TokenType.RIGHT_P); break;
+            case ':': this.#addToken(TokenType.COLON); break;
             case ',': this.#addToken(TokenType.COMMA); break;
             case '-': this.#addToken(TokenType.MINUS); break;
             case '+': this.#addToken(TokenType.PLUS); break;
@@ -335,7 +354,7 @@ class AssignmentExpression extends Expression {
     }
 
     interpret(environment) {
-        const value = this.value.interpret();
+        const value = this.value.interpret(environment);
         environment.assign(this.name, value);
         return null;
     }
@@ -468,6 +487,43 @@ class LiteralExpression extends Expression {
     }
 }
 
+class LogicalExpression extends Expression {
+
+    left;
+    operator;
+    right;
+
+    /**
+     * 
+     * @param {Expression} left 
+     * @param {Token} operator 
+     * @param {Expression} right 
+     */
+    constructor(left, operator, right) {
+        super();
+
+        this.left = left;
+        this.operator = operator;
+        this.right = right;
+    }
+
+    interpret(environment) {
+        const leftValue = this.left.interpret(environment);
+
+        if (this.operator.type == TokenType.OR) {
+            if (isTruthy(leftValue)) {
+                return leftValue;
+            }
+        } else {
+            if (!isTruthy(leftValue)) {
+                return leftValue;
+            }
+        }
+
+        return this.right.interpret();
+    }
+}
+
 class UnaryExpression extends Expression {
 
     token;
@@ -494,22 +550,10 @@ class UnaryExpression extends Expression {
                 return -parseFloat(rightValue);
 
             case TokenType.NOT:
-                return !this.#isTruthy(rightValue);
+                return !isTruthy(rightValue);
         }
 
         return null;
-    }
-
-    #isTruthy(object) {
-        if (object == null) {
-            return false;
-        }
-
-        if (typeof object == 'boolean') {
-            return object;
-        }
-
-        return true;
     }
 
     #checkNumber(value) {
@@ -817,16 +861,127 @@ class IfStatement extends Statement {
         this.elseBranch = elseBranch;
     }
 
-    interpret(environment) {
-        if (this.conditionExpression.interpret(environment)) {
+    async interpret(environment) {
+
+        const condition = this.conditionExpression.interpret(environment);
+
+        if (isTruthy(condition)) {
             for (const statement of this.ifBranch) {
-                statement.interpret(environment);
+                await statement.interpret(environment);
             }
-        } else if (!this.conditionExpression.interpret(environment)) {
+        } else {
             for (const statement of this.elseBranch) {
-                statement.interpret(environment);
+                await statement.interpret(environment);
             }
         }
+
+        return null;
+    }
+}
+
+class WhileBlock extends BlockStatement {
+
+    conditionExpression;
+
+    /**
+     * 
+     * @param {Statement[]} statements 
+     * @param {Expression} conditionExpression 
+     */
+    constructor(statements, conditionExpression) {
+        super(statements);
+
+        this.conditionExpression = conditionExpression;
+    }
+
+    async interpret(environment) {
+        let condition = this.conditionExpression.interpret(environment);
+
+        while (isTruthy(condition)) {
+            await this.executeBlock(new Environment(environment));
+            condition = this.conditionExpression.interpret(environment);
+        }
+
+        return null;
+    }
+}
+
+class ForBlock extends BlockStatement {
+    
+    initializer;
+    condition;
+    increment;
+
+    /**
+     * @param {Statement[]} statements 
+     * @param {Statement} initializer 
+     * @param {Expression} condition 
+     * @param {Statement} increment 
+     */
+    constructor(statements, initializer, condition, increment) {
+        super(statements);
+
+        this.initializer = initializer;
+        this.condition = condition;
+        this.increment = increment;
+    }
+
+    async interpret(environment) {
+
+        this.initializer.interpret(environment);
+
+        let condition = this.condition.interpret(environment);
+        while (isTruthy(condition)) {
+            this.executeBlock(new Environment(environment));
+
+            this.increment.interpret(environment);
+
+            condition = this.condition.interpret(environment);
+        }
+
+    }
+}
+
+class UpdateBlock extends BlockStatement {
+
+    /**
+     * @type {number}
+     */
+    fps;
+
+    /**
+     * 
+     * @param {Statement[]} statements 
+     * @param {Expression} fps 
+     */
+    constructor(statements, fps) {
+        super(statements);
+
+        if (fps) {
+            this.fps = fps.interpret();
+        } else {
+            this.fps = 60;
+        }
+    }
+
+    async interpret(environment) {
+        const msPerFrame = 1000 / this.fps;
+        let lastFrameTime = performance.now();
+
+        const executeFrame = async (timestamp) => {
+            const elapsed = timestamp - lastFrameTime;
+
+            if (elapsed >= msPerFrame) {
+                lastFrameTime = timestamp;
+                await this.executeBlock(new Environment(environment));
+            }
+
+            requestAnimationFrame(executeFrame);
+        };
+
+        requestAnimationFrame(executeFrame);
+
+        return null;
     }
 }
 
@@ -911,7 +1066,19 @@ class Parser {
         }
 
         if (this.#match(TokenType.IF)) {
-            return this.#ifBlock();
+            return this.#ifStatement();
+        }
+
+        if (this.#match(TokenType.WHILE)) {
+            return this.#whileBlock();
+        }
+
+        if (this.#match(TokenType.FOR)) {
+            return this.#forBlock();
+        }
+
+        if (this.#match(TokenType.UPDATE)) {
+            return this.#updateBlock();
         }
 
         return this.#expressionStatement();
@@ -992,7 +1159,7 @@ class Parser {
         return new SleepStatement(sleepExpression);
     }
 
-    #ifBlock() {
+    #ifStatement() {
         this.#match(TokenType.LEFT_P);
         const condition = this.#expression();
         this.#match(TokenType.RIGHT_P);
@@ -1016,15 +1183,55 @@ class Parser {
         return new IfStatement(condition, ifBranch, elseBranch);
     }
 
+    #whileBlock() {
+
+        this.#match(TokenType.LEFT_P);
+        const condition = this.#expression();
+        this.#match(TokenType.RIGHT_P);
+
+        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'WHILE' block`);
+
+        return new WhileBlock(this.#block(), condition);
+    }
+
+    #forBlock() {
+        this.#match(TokenType.LEFT_P);
+        const initializer = this.#declaration();
+        
+        this.#consume(TokenType.COLON, `Missing colon: [:]`);
+        
+        const condition = this.#expression();
+        
+        this.#consume(TokenType.COLON, `Missing colon: [:]`);
+        
+        const increment = this.#declaration();
+        this.#match(TokenType.RIGHT_P);
+
+        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'FOR' block`);
+
+        return new ForBlock(this.#block(), initializer, condition, increment);
+    }
+
+    #updateBlock() {
+
+        let fps = null;
+        if (this.#peek().type == TokenType.NUMBER || this.#peek().type == TokenType.IDENTIFIER) {
+            fps = this.#expression();
+        }
+
+        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'UPDATE' block`);
+
+        return new UpdateBlock(this.#block(), fps);
+    }
+
     #expression() {
         return this.#assignment();
     }
 
     #assignment() {
-        let expression = this.#equality();
+        let expression = this.#or();
 
         if (this.#match(TokenType.EQUAL)) {
-            const equals = this.#previous();
             const value = this.#assignment();
 
             if (expression instanceof VariableExpression) {
@@ -1033,6 +1240,30 @@ class Parser {
             }
 
             throw new Error('Invalid assignment target');
+        }
+
+        return expression;
+    }
+
+    #or() {
+        let expression = this.#and();
+
+        while (this.#match(TokenType.OR)) {
+            const operator = this.#previous();
+            const right = this.#and();
+            expression = new LogicalExpression(expression, operator, right);
+        }
+
+        return expression;
+    }
+
+    #and() {
+        let expression = this.#equality();
+
+        while (this.#match(TokenType.AND)) {
+            const operator = this.#previous();
+            const right = this.#equality();
+            expression = new LogicalExpression(expression, operator, right);
         }
 
         return expression;
