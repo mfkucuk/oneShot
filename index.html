@@ -21,14 +21,19 @@
 				FILL ALL
 
 				SPRITE "Square"
-					SIZE 12, 12
+					SIZE 4, 4
 					FRAME "Idle"
-
+						COLORDATA "@", "red"
+						COLORDATA "#", "blue"
+						PIXELDATA "@@@@"
+						PIXELDATA "@##@"
+						PIXELDATA "@##@"
+						PIXELDATA "@@@@"
 					END
 				END
 
-				COLOR "red"
-				DRAW 30, 30, "Square"
+				COLOR "green"
+				DRAW 30, 30, "Square", 0
 			`;
 
 			oneShot.onPrint = (message) => {

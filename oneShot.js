@@ -52,17 +52,31 @@ class Sprite {
      * @type {Frame[]}
      */
     frames;
+    frameIndex;
 
     constructor() {
         this.frames = [];
+        this.frameIndex = -1;
     }
 
+    get currentFrame() {
+        return this.frames[this.frameIndex];
+    }
+
+    set currentFrame(frame) {
+        this.frames[this.frameIndex] = frame;
+    }
 }
 
 class Frame {
 
     colorData;
     pixelData;
+
+    constructor() {
+        this.colorData = new Map();
+        this.pixelData = [];
+    }
 
 }
 
@@ -93,7 +107,12 @@ const TokenType = {
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
     FILL: 0, TEXT: 0, SLEEP: 0, UPDATE: 0,
-    SPRITE: 0, SIZE: 0, DRAW: 0, FRAME: 0,
+    DRAW: 0, FRAME: 0,
+
+    // Sprite
+    SPRITE: 0, SIZE: 0, FRAME: 0, 
+    COLORDATA: 0, PIXELDATA: 0,
+
 
     EOF: 0
 };
@@ -164,7 +183,9 @@ class Scanner {
         ['SPRITE', TokenType.SPRITE],
         ['SIZE', TokenType.SIZE],
         ['DRAW', TokenType.DRAW],
-        ['FRAME', TokenType.FRAME]
+        ['FRAME', TokenType.FRAME],
+        ['COLORDATA', TokenType.COLORDATA],
+        ['PIXELDATA', TokenType.PIXELDATA]
     ]);
 
     #source;
@@ -900,6 +921,8 @@ class SizeStatement extends Statement {
 
         currentSprite.sizeX = sizeXValue;
         currentSprite.sizeY = sizeYValue;
+
+        return null;
     }
 }
 
@@ -908,28 +931,124 @@ class DrawStatement extends Statement {
     xExpression;
     yExpression;
     nameExpression;
+    frameIndexExpression;
 
     /**
      * @param {Expression} xExpression 
      * @param {Expression} yExpression 
      * @param {Expression} nameExpression 
+     * @param {Expression} frameIndexExpression 
      */
-    constructor(xExpression, yExpression, nameExpression) {
+    constructor(xExpression, yExpression, nameExpression, frameIndexExpression) {
         super();
 
         this.xExpression = xExpression;
         this.yExpression = yExpression;
         this.nameExpression = nameExpression;
+        this.frameIndexExpression = frameIndexExpression;
     }
 
     async interpret(environment) {
         const x = this.xExpression.interpret(environment);
         const y = this.yExpression.interpret(environment);
         const name = this.nameExpression.interpret(environment);
+        const frameIndex = this.frameIndexExpression.interpret(environment);
 
         const sprite = environment.getSprite(name);
+
+        if (frameIndex > sprite.frameIndex) {
+            throw new Error(`SPRITE has no FRAME at index ${frameIndex}`);
+        }
+
+        const frame = sprite.frames[frameIndex];
+
+        const colorBefore = ctx.fillStyle;
         
-        ctx.fillRect(x, y, sprite.sizeX * 4, sprite.sizeY * 4);
+        for (let i = 0; i < frame.pixelData.length; i++) {
+            for (let j = 0; j < frame.pixelData[i].length; j++) {
+                const char = frame.pixelData[i][j];
+                const color = frame.colorData.get(char);
+                
+                if (!color) {
+                    continue;
+                }
+
+                ctx.fillStyle = color;
+
+                ctx.fillRect(x + j * 4, y + i * 4, 4, 4);
+            }
+        }
+
+        ctx.fillStyle = colorBefore;
+
+        return null;
+    }
+}
+
+class ColorDataStatement extends Statement {
+
+    charExpression;
+    colorExpression;
+
+    /**
+     * 
+     * @param {Expression} charExpression 
+     * @param {Expression} colorExpression 
+     */
+    constructor(charExpression, colorExpression) {
+        super();
+
+        this.charExpression = charExpression;
+        this.colorExpression = colorExpression;
+    }
+
+    async interpret(environment) {
+        const charValue = this.charExpression.interpret(environment);
+        const colorValue = this.colorExpression.interpret(environment);
+
+        if (!environment.currentSprite) {
+            throw new Error('COLORDATA can be used in SPRITE block')
+        }
+
+        environment.currentSprite.currentFrame.colorData.set(charValue, colorValue);
+
+        return null;
+    }
+}
+
+class PixelDataStatement extends Statement {
+
+    dataExpression;
+
+    /**
+     * 
+     * @param {Expression} dataExpression 
+     */
+    constructor(dataExpression) {
+        super();
+
+        this.dataExpression = dataExpression;
+    }
+
+    async interpret(environment) {
+        const dataValue = this.dataExpression.interpret(environment);
+        const currentSprite = environment.currentSprite;
+
+        if (!currentSprite) {
+            throw new Error('PIXELDATA can be used in SPRITE block');
+        }
+
+        if (dataValue.length > currentSprite.sizeX) {
+            throw new Error('PIXELDATA exceeds SPRITE width');
+        }
+
+        if (currentSprite.currentFrame.pixelData.length + 1 > currentSprite.sizeY) {
+            throw new Error('PIXELDATA exceeds SPRITE height');
+        }
+
+        currentSprite.currentFrame.pixelData.push(dataValue);
+
+        return null;
     }
 }
 
@@ -1096,6 +1215,8 @@ class SpriteBlock extends BlockStatement {
         environment.addNewSprite(nameValue);
 
         await this.executeBlock(new Environment(environment));
+
+        environment.resetSprite();
     }
 }
 
@@ -1119,6 +1240,11 @@ class FrameBlock extends BlockStatement {
         if (!currentSprite) {
             throw new Error('FRAME block can only be used in SPRITE block');
         }
+
+        currentSprite.frameIndex++;
+        currentSprite.currentFrame = new Frame();
+
+        await this.executeBlock(new Environment(environment));
     }
 }
 
@@ -1205,6 +1331,14 @@ class Parser {
 
         if (this.#match(TokenType.DRAW)) {
             return this.#drawStatement();
+        }
+
+        if (this.#match(TokenType.COLORDATA)) {
+            return this.#colorDataStatement();
+        }
+
+        if (this.#match(TokenType.PIXELDATA)) {
+            return this.#pixelDataStatement();
         }
 
         if (this.#match(TokenType.THEN)) {
@@ -1330,8 +1464,26 @@ class Parser {
         this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
         
         const nameExpression = this.#expression();
+        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
 
-        return new DrawStatement(xExpression, yExpression, nameExpression);
+        const frameIndexExpression = this.#expression();
+
+        return new DrawStatement(xExpression, yExpression, nameExpression, frameIndexExpression);
+    }
+
+    #colorDataStatement() {
+        const char = this.#expression();
+        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+
+        const color = this.#expression();
+
+        return new ColorDataStatement(char, color);
+    }
+
+    #pixelDataStatement() {
+        const data = this.#expression();
+
+        return new PixelDataStatement(data);
     }
 
     #ifStatement() {
@@ -1685,6 +1837,10 @@ class Environment {
         }
 
         throw new Error(`Undefined sprite: ${name}`);
+    }
+
+    resetSprite() {
+        this.#currentSpriteName = '';
     }
 }
 
