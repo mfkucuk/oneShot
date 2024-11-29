@@ -21,24 +21,7 @@ let ctx = null;
  */
 let audioContext = null;
 
-/**
- * @type {OscillatorNode}
- */
-let oscillator = null;
-
 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-oscillator = audioContext.createOscillator();
-oscillator.connect(audioContext.destination);
-oscillator.type = 'triangle';
-oscillator.frequency.setValueAtTime(getFrequency('C4'), audioContext.currentTime);
-oscillator.frequency.setValueAtTime(getFrequency('D4'), audioContext.currentTime + 1);
-oscillator.frequency.setValueAtTime(getFrequency('E4'), audioContext.currentTime + 2);
-oscillator.frequency.setValueAtTime(getFrequency('F4'), audioContext.currentTime + 3);
-oscillator.frequency.setValueAtTime(getFrequency('G4'), audioContext.currentTime + 4);
-oscillator.frequency.setValueAtTime(getFrequency('A4'), audioContext.currentTime + 5);
-oscillator.frequency.setValueAtTime(getFrequency('B4'), audioContext.currentTime + 6);
-oscillator.frequency.setValueAtTime(getFrequency('C5'), audioContext.currentTime + 7);
-// oscillator.start();
 
 // Helper Functions
 /**
@@ -66,31 +49,11 @@ function isTruthy(object) {
     return true;
 }
 
-/**
- * Converts a note (letter-number combination) into its frequency value.
- * @param {string} note 
- */
-function getFrequency(note) {
-    const noteOffsets = {
-        C: -9,
-        D: -7,
-        E: -5,
-        F: -4,
-        G: -2,
-        A: 0,
-        B: 2,
-    };
 
-    const letter = note[0].toUpperCase();
-    const octave = parseInt(note[1], 10);
 
-    const semitonesFromA4 = noteOffsets[letter] + (octave - 4) * 12;
+/* OneShot classes */
 
-    const frequency = 440 * Math.pow(2, semitonesFromA4 / 12);
-    return frequency;
-}
-
-// OneShot classes
+// Rendering
 class Sprite {
     
     sizeX;
@@ -138,6 +101,220 @@ class Frame {
 
 }
 
+// BGM & SFX
+class Song extends GainNode {
+    
+    /**
+     * @param {BaseAudioContext} ctx 
+     */
+    constructor(ctx) {
+        super(ctx);
+
+        this.sheets = [];
+        this.bpm = 120;
+        this.loop = false;
+    }
+
+    get currentSheet() {
+        if (this.sheets.length == 0) {
+            return null;
+        }
+
+        return this.sheets[this.sheets.length - 1];
+    }
+
+    /**
+     * 
+     * @param {Sheet} sheet 
+     */
+    addSheet(sheet) {
+        sheet.index = this.sheets.length;
+        this.sheets.push(sheet);
+    }
+
+    async play() {
+        const promises = [];
+
+        for (const sheet of this.sheets) {
+            promises.push(sheet.play());
+        }
+
+        await Promise.all(promises);
+    }
+
+    stop() {
+        for (const sheet of this.sheets) {
+            sheet.stop();
+        }
+    }
+}
+
+class Sheet {
+
+    /**
+     * @param {Song} song 
+     */
+    constructor(song) {
+        this.song = song;
+        this.index = -1;
+        this.bars = '';
+        this.notes = [];
+        this.gain = 0.8;
+        this.type = 'sine';
+        this.attack = 2;
+        this.release = 20;
+    }
+
+    build() {
+        const sheetNotes = this.bars.trim()
+            .replaceAll("\r", " ")
+            .replaceAll("\n", " ")
+            .replaceAll("\t", " ")
+            .split(" ");
+
+        for (const sheetNote of sheetNotes) {
+            if (sheetNote == '--') {
+                const previousNote = this.notes[this.notes.length - 1];
+                if (previousNote && previousNote.note) {
+                    previousNote.length++;
+                    continue;
+                }
+
+                const note = new Note();
+                note.sheet = this;
+                this.notes.push(note);
+                continue;
+            } 
+            
+            if (sheetNote == '..') {
+                const previousNote = this.notes[this.notes.length - 1];
+                previousNote.length++;
+                continue;
+            }
+
+            const note = new Note(sheetNote, this);
+            this.notes.push(note);
+        }
+    }
+
+    async play() {
+        this.build();
+
+        const song = this.song;
+        const ctx = song.ctx;
+
+        this.node = ctx.createGain();
+        this.node.gain.value = this.gain;
+        this.node.connect(song);
+
+        let index = 0;
+        this.playing = true;
+
+        while (this.playing) {
+            await this.notes[index++].play();
+            if (index == this.notes.length) {
+                if (song.loop) {
+                    index = 0;
+                    continue;
+                }
+                break;
+            }
+        }
+
+        await sleep(5000);
+
+        this.node.disconnect();
+    }
+
+    stop() {
+        this.playing = false;
+    }
+}
+
+class Note {
+
+    static noteOffsets = {
+        C: -9,
+        D: -7,
+        E: -5,
+        F: -4,
+        G: -2,
+        A: 0,
+        B: 2,
+    };
+    
+    constructor(note, sheet) {
+        this.note = note;
+        this.length = 1;
+
+        this.sheet = sheet;
+    }
+
+    /**
+     * Converts a note (letter-number combination) into its frequency value.
+     * @param {string} note 
+     */
+    #getFrequency(note) {
+        const letter = note[0].toUpperCase();
+        const octave = parseInt(note[1], 10);
+
+        const semitonesFromA4 = noteOffsets[letter] + (octave - 4) * 12;
+
+        const frequency = 440 * Math.pow(2, semitonesFromA4 / 12);
+        return frequency;
+    }
+
+    async play() {
+
+        const sheet = this.sheet;
+        const song = sheet.song;
+
+        const length = this.length * (120 / song.bpm);
+
+        let oscillator = null;
+        let gainNode = null;
+
+        if (this.note) {
+            const ctx = song.ctx;
+            const time = ctx.currentTime;
+            const gain = sheet.gain;
+
+            const attack = Math.min(length / 2, instrument.attack / 1000);
+            const release = Math.min(length / 2, instrument.release / 1000);
+
+            gainNode = ctx.createGain();
+
+            gainNode.gain.setValueAtTime(0, time);
+            gainNode.gain.linearRampToValueAtTime(gain, time + attack);
+
+            gainNode.gain.setValueAtTime(gain, time + length - release);
+            gainNode.gain.linearRampToValueAtTime(0, time + length);
+
+            gainNode.connect(ctx.destination);
+
+            oscillator = ctx.createOscillator();
+            oscillator.type = sheet.type;
+            oscillator.frequency.value = this.#getFrequency(this.note);
+            oscillator.connect(gainNode);
+            oscillator.start();
+        }
+
+        await Promise.timeout(resolve => {
+            if (oscillator) {
+                oscillator.stop();
+                oscillator.disconnect();
+                oscillator = undefined;
+            }
+
+            if (gainNode) {
+                gainNode.disconnect(ctx.destination);
+                gainNode = undefined;
+            }
+            resolve();
+        }, length * 1100);
+    }
+}
+
 // Beyond here is interpreter related
 /**
  * All the allowed tokens in OneShot
@@ -164,12 +341,15 @@ const TokenType = {
 
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
-    FILL: 0, TEXT: 0, SLEEP: 0,
-    DRAW: 0, FRAME: 0,
+    FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, 
 
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
     COLORDATA: 0, PIXELDATA: 0,
+
+    // BGM & SFX
+    SONG: 0, SHEET: 0, BAR: 0, GAIN: 0,
+    BPM: 0, LOOP: 0, TYPE: 0,
 
 
     EOF: 0
@@ -243,7 +423,14 @@ class Scanner {
         ['DRAW', TokenType.DRAW],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
-        ['PIXELDATA', TokenType.PIXELDATA]
+        ['PIXELDATA', TokenType.PIXELDATA],
+        ['SONG', TokenType.SONG],
+        ['SHEET', TokenType.SHEET],
+        ['BAR', TokenType.BAR],
+        ['GAIN', TokenType.GAIN],
+        ['BPM', TokenType.GAIN],
+        ['LOOP', TokenType.LOOP],
+        ['TYPE', TokenType.TYPE],
     ]);
 
     #source;
@@ -1264,6 +1451,41 @@ class FrameBlock extends BlockStatement {
     }
 }
 
+class SongBlock extends BlockStatement {
+
+    nameExpression;
+
+    /**
+     * @param {Statement[]} statements 
+     * @param {Expression} nameExpression 
+     */
+    constructor(statements, nameExpression) {
+        super(statements);
+
+        this.nameExpression = nameExpression;
+    }
+
+    async interpret(environment) {
+        const nameValue = this.nameExpression.interpret(environment);
+
+        environment.addNewSong(nameValue);
+
+        await this.executeBlock(new Environment(environment));
+
+        environment.resetSong();
+    }
+}
+
+class SheetBlock extends BlockStatement {
+
+    async interpret(environment) {
+        const newSheet = new Sheet(environment.currentSong);
+        environment.currentSong.addSheet(newSheet);
+
+        await this.executeBlock(new Environment(environment));
+    }
+}
+
 class Parser {
 
     #tokens;
@@ -1379,6 +1601,14 @@ class Parser {
 
         if (this.#match(TokenType.FRAME)) {
             return this.#frameBlock();
+        }
+
+        if (this.#match(TokenType.SONG)) {
+            return this.#songBlock();
+        }
+
+        if (this.#match(TokenType.SHEET)) {
+            return this.#sheetBlock();
         }
 
         return this.#expressionStatement();
@@ -1569,6 +1799,21 @@ class Parser {
         }
 
         return new FrameBlock(this.#block(), name);
+    }
+
+    #songBlock() {
+        let name = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            name = this.#expression();
+        } else {
+            throw new Error('SONG must have a name: SONG "exampleSong"');
+        }
+
+        return new SongBlock(this.#block(), name);
+    }
+
+    #sheetBlock() {
+        return new SheetBlock(this.#block());
     }
 
     #expression() {
@@ -1773,6 +2018,19 @@ class Environment {
         }
     }
 
+    // songs
+    #songs = new Map();
+    #currentSongName = '';
+
+    get currentSong() {
+        if (this.#songs.has(this.#currentSongName)) {
+            return this.#songs.get(this.#currentSongName);
+        }
+
+        if (this.#enclosing != null) {
+            return this.#enclosing.currentSong;
+        }
+    }
 
     /**
      * @param {Environment} enclosing 
@@ -1841,6 +2099,27 @@ class Environment {
 
     resetSprite() {
         this.#currentSpriteName = '';
+    }
+
+    addNewSong(name) {
+        this.#currentSongName = name;
+        this.#songs.set(name, new Song(audioContext));
+    }
+
+    getSong(name) {
+        if (this.#songs.has(name)) {
+            return this.#songs.get(name);
+        }
+
+        if (this.#enclosing != null) {
+            return this.#enclosing.getSong(name);
+        }
+
+        throw new Error(`Undefined song: ${name}`);
+    }
+
+    resetSong() {
+        this.#currentSongName = '';
     }
 }
 
