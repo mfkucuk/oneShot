@@ -20,27 +20,45 @@
 				COLOR "lightgrey"
 				FILL ALL
 
-				SPRITE "Square"
-					SIZE 4, 4
-					FRAME "Idle"
-						COLORDATA "@", "red"
-						COLORDATA "#", "blue"
-						PIXELDATA "@@@@"
-						PIXELDATA "@##@"
-						PIXELDATA "@##@"
-						PIXELDATA "@@@@"
+				SPRITE "Hero"
+					SIZE 12, 12
+					FRAME "Front"
+						COLORDATA "#", "black"
+						COLORDATA ".", "#FC9"
+						COLORDATA "-", "#9999CC"
+						PIXELDATA "    ####    "
+						PIXELDATA "  ##....##  "
+						PIXELDATA " #...##...# "
+						PIXELDATA " #........# "
+						PIXELDATA " #.##..##.# "
+						PIXELDATA " #........# "
+						PIXELDATA " #...##...# "
+						PIXELDATA "  #......#  "
+						PIXELDATA " #-######-# "
+						PIXELDATA "#.#------#.#"
+						PIXELDATA " ##--##--## "
+						PIXELDATA "   ##  ##   "
 					END
 				END
 
 				LET X = 0
 				LET Y = 0
+				LET RUNNING = TRUE
 
-				UPDATE 60 THEN
+				WHILE RUNNING THEN
 					FILL ALL
-					DRAW X, Y, "Square", 0
+					DRAW X, Y, "Hero", "Front"
 
 					X = X + 1
+
+					IF X > 300 THEN
+						RUNNING = FALSE
+					END
+
+					SLEEP 1000 / 60
 				END
+
+				PRINT "End of game"
 			`;
 
 			oneShot.onPrint = (message) => {

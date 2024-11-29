@@ -16,6 +16,30 @@ let canvas = null;
  */
 let ctx = null;
 
+/**
+ * @type {AudioContext}
+ */
+let audioContext = null;
+
+/**
+ * @type {OscillatorNode}
+ */
+let oscillator = null;
+
+audioContext = new (window.AudioContext || window.webkitAudioContext)();
+oscillator = audioContext.createOscillator();
+oscillator.connect(audioContext.destination);
+oscillator.type = 'triangle';
+oscillator.frequency.setValueAtTime(getFrequency('C4'), audioContext.currentTime);
+oscillator.frequency.setValueAtTime(getFrequency('D4'), audioContext.currentTime + 1);
+oscillator.frequency.setValueAtTime(getFrequency('E4'), audioContext.currentTime + 2);
+oscillator.frequency.setValueAtTime(getFrequency('F4'), audioContext.currentTime + 3);
+oscillator.frequency.setValueAtTime(getFrequency('G4'), audioContext.currentTime + 4);
+oscillator.frequency.setValueAtTime(getFrequency('A4'), audioContext.currentTime + 5);
+oscillator.frequency.setValueAtTime(getFrequency('B4'), audioContext.currentTime + 6);
+oscillator.frequency.setValueAtTime(getFrequency('C5'), audioContext.currentTime + 7);
+// oscillator.start();
+
 // Helper Functions
 /**
  * Pause execution for [ms] milliseconds
@@ -42,6 +66,30 @@ function isTruthy(object) {
     return true;
 }
 
+/**
+ * Converts a note (letter-number combination) into its frequency value.
+ * @param {string} note 
+ */
+function getFrequency(note) {
+    const noteOffsets = {
+        C: -9,
+        D: -7,
+        E: -5,
+        F: -4,
+        G: -2,
+        A: 0,
+        B: 2,
+    };
+
+    const letter = note[0].toUpperCase();
+    const octave = parseInt(note[1], 10);
+
+    const semitonesFromA4 = noteOffsets[letter] + (octave - 4) * 12;
+
+    const frequency = 440 * Math.pow(2, semitonesFromA4 / 12);
+    return frequency;
+}
+
 // OneShot classes
 class Sprite {
     
@@ -52,10 +100,16 @@ class Sprite {
      * @type {Frame[]}
      */
     frames;
+
+    /**
+     * @type {Map<string, Frame>}
+     */
+    frameMap;
     frameIndex;
 
     constructor() {
         this.frames = [];
+        this.frameMap = new Map();
         this.frameIndex = -1;
     }
 
@@ -65,6 +119,7 @@ class Sprite {
 
     set currentFrame(frame) {
         this.frames[this.frameIndex] = frame;
+        this.frameMap.set(this.frames[this.frameIndex].frameName, this.frames[this.frameIndex]);
     }
 }
 
@@ -73,9 +128,12 @@ class Frame {
     colorData;
     pixelData;
 
-    constructor() {
+    constructor(frameName) {
         this.colorData = new Map();
         this.pixelData = [];
+
+
+        this.frameName = frameName;
     }
 
 }
@@ -106,7 +164,7 @@ const TokenType = {
 
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
-    FILL: 0, TEXT: 0, SLEEP: 0, UPDATE: 0,
+    FILL: 0, TEXT: 0, SLEEP: 0,
     DRAW: 0, FRAME: 0,
 
     // Sprite
@@ -952,15 +1010,16 @@ class DrawStatement extends Statement {
         const x = this.xExpression.interpret(environment);
         const y = this.yExpression.interpret(environment);
         const name = this.nameExpression.interpret(environment);
-        const frameIndex = this.frameIndexExpression.interpret(environment);
+        const frameSpec = this.frameIndexExpression.interpret(environment);
 
         const sprite = environment.getSprite(name);
 
-        if (frameIndex > sprite.frameIndex) {
-            throw new Error(`SPRITE has no FRAME at index ${frameIndex}`);
+        let frame = null;
+        if (typeof frameSpec == 'number') {
+            frame = sprite.frames[frameSpec];
+        } else if (typeof frameSpec == 'string') {
+            frame = sprite.frameMap.get(frameSpec);
         }
-
-        const frame = sprite.frames[frameIndex];
 
         const colorBefore = ctx.fillStyle;
         
@@ -1152,49 +1211,6 @@ class ForBlock extends BlockStatement {
     }
 }
 
-class UpdateBlock extends BlockStatement {
-
-    /**
-     * @type {number}
-     */
-    fps;
-
-    /**
-     * 
-     * @param {Statement[]} statements 
-     * @param {Expression} fps 
-     */
-    constructor(statements, fps) {
-        super(statements);
-
-        if (fps) {
-            this.fps = fps.interpret();
-        } else {
-            this.fps = 60;
-        }
-    }
-
-    async interpret(environment) {
-        const msPerFrame = 1000 / this.fps;
-        let lastFrameTime = performance.now();
-
-        const executeFrame = async (timestamp) => {
-            const elapsed = timestamp - lastFrameTime;
-
-            if (elapsed >= msPerFrame) {
-                lastFrameTime = timestamp;
-                await this.executeBlock(new Environment(environment));
-            }
-
-            requestAnimationFrame(executeFrame);
-        };
-
-        requestAnimationFrame(executeFrame);
-
-        return null;
-    }
-}
-
 class SpriteBlock extends BlockStatement {
 
     nameExpression;
@@ -1242,7 +1258,7 @@ class FrameBlock extends BlockStatement {
         }
 
         currentSprite.frameIndex++;
-        currentSprite.currentFrame = new Frame();
+        currentSprite.currentFrame = new Frame(this.frameNameExpression.interpret(environment));
 
         await this.executeBlock(new Environment(environment));
     }
@@ -1357,10 +1373,6 @@ class Parser {
             return this.#forBlock();
         }
 
-        if (this.#match(TokenType.UPDATE)) {
-            return this.#updateBlock();
-        }
-
         if (this.#match(TokenType.SPRITE)) {
             return this.#spriteBlock();
         }
@@ -1466,9 +1478,9 @@ class Parser {
         const nameExpression = this.#expression();
         this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
 
-        const frameIndexExpression = this.#expression();
+        const frameExpression = this.#expression();
 
-        return new DrawStatement(xExpression, yExpression, nameExpression, frameIndexExpression);
+        return new DrawStatement(xExpression, yExpression, nameExpression, frameExpression);
     }
 
     #colorDataStatement() {
@@ -1537,18 +1549,6 @@ class Parser {
         this.#consume(TokenType.THEN, `Expected 'THEN' to start 'FOR' block`);
 
         return new ForBlock(this.#block(), initializer, condition, increment);
-    }
-
-    #updateBlock() {
-
-        let fps = null;
-        if (this.#peek().type == TokenType.NUMBER || this.#peek().type == TokenType.IDENTIFIER) {
-            fps = this.#expression();
-        }
-
-        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'UPDATE' block`);
-
-        return new UpdateBlock(this.#block(), fps);
     }
 
     #spriteBlock() {
