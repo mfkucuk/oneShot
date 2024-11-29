@@ -571,7 +571,7 @@ class LogicalExpression extends Expression {
             }
         }
 
-        return this.right.interpret();
+        return this.right.interpret(environment);
     }
 }
 
@@ -887,7 +887,7 @@ class SleepStatement extends Statement {
     }
 
     async interpret(environment) {
-        const sleepDuration = this.sleepExpression.interpret();
+        const sleepDuration = this.sleepExpression.interpret(environment);
         await sleep(sleepDuration);
         return null;
     }
@@ -1210,7 +1210,7 @@ class SpriteBlock extends BlockStatement {
     }
 
     async interpret(environment) {
-        const nameValue = this.nameExpression.interpret();
+        const nameValue = this.nameExpression.interpret(environment);
 
         environment.addNewSprite(nameValue);
 
