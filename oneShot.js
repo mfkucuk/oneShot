@@ -110,6 +110,7 @@ class Song extends GainNode {
     constructor(ctx) {
         super(ctx);
 
+        this.ctx = ctx;
         this.sheets = [];
         this.bpm = 120;
         this.loop = false;
@@ -258,7 +259,7 @@ class Note {
         const letter = note[0].toUpperCase();
         const octave = parseInt(note[1], 10);
 
-        const semitonesFromA4 = noteOffsets[letter] + (octave - 4) * 12;
+        const semitonesFromA4 = Note.noteOffsets[letter] + (octave - 4) * 12;
 
         const frequency = 440 * Math.pow(2, semitonesFromA4 / 12);
         return frequency;
@@ -279,8 +280,8 @@ class Note {
             const time = ctx.currentTime;
             const gain = sheet.gain;
 
-            const attack = Math.min(length / 2, instrument.attack / 1000);
-            const release = Math.min(length / 2, instrument.release / 1000);
+            const attack = Math.min(length / 2, sheet.attack / 1000);
+            const release = Math.min(length / 2, sheet.release / 1000);
 
             gainNode = ctx.createGain();
 
@@ -299,7 +300,7 @@ class Note {
             oscillator.start();
         }
 
-        await Promise.timeout(resolve => {
+        setTimeout(() => {
             if (oscillator) {
                 oscillator.stop();
                 oscillator.disconnect();
@@ -310,7 +311,6 @@ class Note {
                 gainNode.disconnect(ctx.destination);
                 gainNode = undefined;
             }
-            resolve();
         }, length * 1100);
     }
 }
@@ -349,7 +349,7 @@ const TokenType = {
 
     // BGM & SFX
     SONG: 0, SHEET: 0, BAR: 0, GAIN: 0,
-    BPM: 0, LOOP: 0, TYPE: 0,
+    BPM: 0, LOOP: 0, TYPE: 0, PLAY: 0, STOP: 0,
 
 
     EOF: 0
@@ -431,6 +431,8 @@ class Scanner {
         ['BPM', TokenType.GAIN],
         ['LOOP', TokenType.LOOP],
         ['TYPE', TokenType.TYPE],
+        ['PLAY', TokenType.PLAY],
+        ['STOP', TokenType.STOP],
     ]);
 
     #source;
@@ -1298,6 +1300,77 @@ class PixelDataStatement extends Statement {
     }
 }
 
+class BarStatement extends Statement {
+
+    barExpression;
+
+    /**
+     * 
+     * @param {Expression} barExpression 
+     */
+    constructor(barExpression) {
+        super();
+
+        this.barExpression = barExpression;
+    }
+
+    async interpret(environment) {
+        const bar = this.barExpression.interpret(environment);
+        const currentSong = environment.currentSong;
+        const currentSheet = currentSong.currentSheet;
+
+        if (!(currentSong && currentSheet)) {
+            throw new Error('BAR misuse');
+        }
+
+        currentSheet.bars += `${bar}\n`;
+
+        return null;
+    }
+}
+
+class PlayStatement extends Statement {
+
+    songNameExpression;
+
+    /**
+     * @param {Expression} songNameExpression 
+     */
+    constructor(songNameExpression) {
+        super();
+
+        this.songNameExpression = songNameExpression;
+    }
+
+    async interpret(environment) {
+        const song = environment.getSong(this.songNameExpression.interpret(environment));
+        await song.play();
+
+        return null;
+    }
+}
+
+class StopStatement extends Statement {
+
+    songNameExpression;
+
+    /**
+     * @param {Expression} songNameExpression 
+     */
+    constructor(songNameExpression) {
+        super();
+
+        this.songNameExpression = songNameExpression;
+    }
+
+    async interpret(environment) {
+        const song = environment.getSong(this.songNameExpression.interpret(environment));
+        song.stop();
+
+        return null;
+    }
+}
+
 class IfStatement extends Statement {
 
     conditionExpression;
@@ -1395,6 +1468,7 @@ class ForBlock extends BlockStatement {
             condition = this.condition.interpret(environment);
         }
 
+        return null;
     }
 }
 
@@ -1420,6 +1494,8 @@ class SpriteBlock extends BlockStatement {
         await this.executeBlock(new Environment(environment));
 
         environment.resetSprite();
+
+        return null;
     }
 }
 
@@ -1448,6 +1524,8 @@ class FrameBlock extends BlockStatement {
         currentSprite.currentFrame = new Frame(this.frameNameExpression.interpret(environment));
 
         await this.executeBlock(new Environment(environment));
+
+        return null;
     }
 }
 
@@ -1473,6 +1551,8 @@ class SongBlock extends BlockStatement {
         await this.executeBlock(new Environment(environment));
 
         environment.resetSong();
+
+        return null;
     }
 }
 
@@ -1483,6 +1563,8 @@ class SheetBlock extends BlockStatement {
         environment.currentSong.addSheet(newSheet);
 
         await this.executeBlock(new Environment(environment));
+
+        return null;
     }
 }
 
@@ -1577,6 +1659,18 @@ class Parser {
 
         if (this.#match(TokenType.PIXELDATA)) {
             return this.#pixelDataStatement();
+        }
+
+        if (this.#match(TokenType.BAR)) {
+            return this.#barStatement();
+        }
+
+        if (this.#match(TokenType.PLAY)) {
+            return this.#playStatement();
+        }
+
+        if (this.#match(TokenType.STOP)) {
+            return this.#stopStatement();
         }
 
         if (this.#match(TokenType.THEN)) {
@@ -1726,6 +1820,39 @@ class Parser {
         const data = this.#expression();
 
         return new PixelDataStatement(data);
+    }
+
+    #barStatement() {
+        let bar = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            bar = this.#expression();
+        } else {
+            throw new Error('BAR must have a bar: BAR "C4 -- D4"');
+        }
+
+        return new BarStatement(bar);
+    }
+
+    #playStatement() {
+        let songName = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            songName = this.#expression();
+        } else {
+            throw new Error('PLAY must have a songName: PLAY "song"');
+        }
+
+        return new PlayStatement(songName);
+    }
+
+    #stopStatement() {
+        let songName = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            songName = this.#expression();
+        } else {
+            throw new Error('STOP must have a songName: STOP "song"');
+        }
+
+        return new StopStatement(songName);
     }
 
     #ifStatement() {
