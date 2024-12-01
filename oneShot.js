@@ -176,7 +176,7 @@ class Sheet {
         for (const sheetNote of sheetNotes) {
             if (sheetNote == '--') {
                 const previousNote = this.notes[this.notes.length - 1];
-                if (previousNote && previousNote.note) {
+                if (previousNote && previousNote.note == '--') {
                     previousNote.length++;
                     continue;
                 }
@@ -300,18 +300,18 @@ class Note {
             oscillator.start();
         }
 
-        setTimeout(() => {
-            if (oscillator) {
-                oscillator.stop();
-                oscillator.disconnect();
-                oscillator = undefined;
-            }
+        await sleep(length * 1100);
 
-            if (gainNode) {
-                gainNode.disconnect(ctx.destination);
-                gainNode = undefined;
-            }
-        }, length * 1100);
+        if (oscillator) {
+            oscillator.stop();
+            oscillator.disconnect();
+            oscillator = undefined;
+        }
+
+        if (gainNode) {
+            gainNode.disconnect(ctx.destination);
+            gainNode = undefined;
+        }
     }
 }
 
@@ -428,7 +428,7 @@ class Scanner {
         ['SHEET', TokenType.SHEET],
         ['BAR', TokenType.BAR],
         ['GAIN', TokenType.GAIN],
-        ['BPM', TokenType.GAIN],
+        ['BPM', TokenType.BPM],
         ['LOOP', TokenType.LOOP],
         ['TYPE', TokenType.TYPE],
         ['PLAY', TokenType.PLAY],
@@ -1329,6 +1329,96 @@ class BarStatement extends Statement {
     }
 }
 
+class GainStatement extends Statement {
+
+    gainExpression;
+
+    /**
+     * @param {Expression} gainExpression 
+     */
+    constructor(gainExpression) {
+        super();
+        
+        this.gainExpression = gainExpression;
+    }
+
+    async interpret(environment) {
+        const gainValue = this.gainExpression.interpret(environment);
+
+        const currentSong = environment.currentSong;
+        currentSong.currentSheet.gain = gainValue / 100;
+
+        return null;
+    }
+}
+
+class BpmStatement extends Statement {
+
+    bpmExpression;
+
+    /**
+     * @param {Expression} bpmExpression 
+     */
+    constructor(bpmExpression) {
+        super();
+
+        this.bpmExpression = bpmExpression;
+    }
+
+    async interpret(environment) {
+        const bpmValue = this.bpmExpression.interpret(environment);
+
+        environment.currentSong.bpm = bpmValue;
+
+        return null;
+    }
+}
+
+class LoopStatement extends Statement {
+
+    loopExpression;
+
+    /**
+     * @param {Expression} loopExpression 
+     */
+    constructor(loopExpression) {
+        super();
+
+        this.loopExpression = loopExpression;
+    }
+
+    async interpret(environment) {
+        const loopValue = this.loopExpression.interpret(environment);
+
+        environment.currentSong.loop = isTruthy(loopValue);
+
+        return null;
+    }
+}
+
+class TypeStatement extends Statement {
+
+    waveTypeExpression;
+
+    /**
+     * @param {Expression} waveTypeExpression 
+     */
+    constructor(waveTypeExpression) {
+        super();
+
+        this.waveTypeExpression = waveTypeExpression;
+    }
+
+    async interpret(environment) {
+        const waveTypeValue = this.waveTypeExpression.interpret(environment);
+
+        const currentSong = environment.currentSong;
+        currentSong.currentSheet.type = waveTypeValue;
+
+        return null;
+    }
+}
+
 class PlayStatement extends Statement {
 
     songNameExpression;
@@ -1344,7 +1434,7 @@ class PlayStatement extends Statement {
 
     async interpret(environment) {
         const song = environment.getSong(this.songNameExpression.interpret(environment));
-        await song.play();
+        song.play();
 
         return null;
     }
@@ -1665,6 +1755,22 @@ class Parser {
             return this.#barStatement();
         }
 
+        if (this.#match(TokenType.GAIN)) {
+            return this.#gainStatement();
+        }
+
+        if (this.#match(TokenType.BPM)) {
+            return this.#bpmStatement();
+        }
+
+        if (this.#match(TokenType.LOOP)) {
+            return this.#loopStatement();
+        }
+
+        if (this.#match(TokenType.TYPE)) {
+            return this.#typeStatement();
+        }
+
         if (this.#match(TokenType.PLAY)) {
             return this.#playStatement();
         }
@@ -1831,6 +1937,44 @@ class Parser {
         }
 
         return new BarStatement(bar);
+    }
+
+    #gainStatement() {
+        let gain = null;
+        if (this.#peek().type == TokenType.NUMBER || this.#peek().type == TokenType.IDENTIFIER) {
+            gain = this.#expression();
+        } else {
+            throw new Error('GAIN must have a number: GAIN 80');
+        }
+
+        return new GainStatement(gain);
+    }
+
+    #bpmStatement() {
+        let bpm = null;
+        if (this.#peek().type == TokenType.NUMBER || this.#peek().type == TokenType.IDENTIFIER) {
+            bpm = this.#expression();
+        } else {
+            throw new Error('BPM must have a number: BPM 120');
+        }
+
+        return new BpmStatement(bpm);
+    }
+
+    #loopStatement() {
+        let loop = this.#expression();
+        return new LoopStatement(loop);
+    }
+
+    #typeStatement() {
+        let waveType = null;
+        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
+            waveType = this.#expression();
+        } else {
+            throw new Error('TYPE must have a type: TYPE "sawtooth"');
+        }
+
+        return new TypeStatement(waveType);
     }
 
     #playStatement() {

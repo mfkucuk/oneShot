@@ -28,7 +28,7 @@
 						COLORDATA "-", "#9999CC"
 						PIXELDATA "    ####    "
 						PIXELDATA "  ##....##  "
-						PIXELDATA " #...##...# "
+						PIXELDATA " #........# "
 						PIXELDATA " #........# "
 						PIXELDATA " #.##..##.# "
 						PIXELDATA " #........# "
@@ -42,14 +42,20 @@
 				END
 
 				SONG "Test"
+					BPM 480
+					LOOP TRUE
+
 					SHEET
-						BAR "C4 -- D4"
+						GAIN 40
+						TYPE "sine"
+						BAR "C4 D4 E4 F4 G4"
 					END
 				END
 
 				LET X = 0
 				LET Y = 0
 				LET RUNNING = TRUE
+				LET FPS = 60
 
 				PLAY "Test"
 
@@ -63,7 +69,7 @@
 						RUNNING = FALSE
 					END
 
-					SLEEP 1000 / 60
+					SLEEP 1000 / FPS
 				END
 
 				PRINT "End of game"
