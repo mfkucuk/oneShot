@@ -17,6 +17,10 @@
 				# This is a comment
 				WINDOW 400, 400
 
+				IF (RANDOM() > 0.5) THEN
+					PRINT "WOW"
+				END
+
 				COLOR "lightgrey"
 				FILL ALL
 
@@ -46,7 +50,7 @@
 					LOOP TRUE
 
 					SHEET
-						GAIN 40
+						GAIN 20
 						TYPE "sine"
 						BAR "C4 D4 E4 F4 G4"
 					END
@@ -72,6 +76,7 @@
 					SLEEP 1000 / FPS
 				END
 
+				STOP "Test"
 				PRINT "End of game"
 			`;
 

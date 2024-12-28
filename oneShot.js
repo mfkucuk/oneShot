@@ -341,7 +341,7 @@ const TokenType = {
 
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
-    FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, 
+    FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, RANDOM: 0,
 
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
@@ -421,6 +421,7 @@ class Scanner {
         ['SPRITE', TokenType.SPRITE],
         ['SIZE', TokenType.SIZE],
         ['DRAW', TokenType.DRAW],
+        ['RANDOM', TokenType.RANDOM],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
         ['PIXELDATA', TokenType.PIXELDATA],
@@ -879,6 +880,14 @@ class VariableExpression extends Expression {
     interpret(environment) {
         return environment.get(this.name)
     }
+}
+
+class RandomExpression extends Expression {
+
+    interpret(environment) {
+        return Math.random();
+    }
+
 }
 
 class Statement {
@@ -2215,6 +2224,12 @@ class Parser {
             let expression = this.#expression();
             this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
             return new GroupingExpression(expression);
+        }
+
+        if (this.#match(TokenType.RANDOM)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new RandomExpression();
         }
 
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
