@@ -61,22 +61,27 @@
 				LET RUNNING = TRUE
 				LET FPS = 60
 
-				PLAY "Test"
-
 				WHILE RUNNING THEN
 					FILL ALL
 					DRAW X, Y, "Hero", "Front"
 
-					X = X + 1
+					IF (INPUT("d")) THEN
+						X = X + 1
+					END
 
-					IF X > 300 THEN
+					IF (INPUT("s")) THEN
+						Y = Y + 1
+					END
+
+
+					# Close game
+					IF (INPUT("Escape")) THEN
 						RUNNING = FALSE
 					END
 
 					SLEEP 1000 / FPS
 				END
 
-				STOP "Test"
 				PRINT "End of game"
 			`;
 

@@ -19,9 +19,7 @@ let ctx = null;
 /**
  * @type {AudioContext}
  */
-let audioContext = null;
-
-audioContext = new (window.AudioContext || window.webkitAudioContext)();
+let audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
 // Helper Functions
 /**
@@ -52,6 +50,48 @@ function isTruthy(object) {
 
 
 /* OneShot classes */
+
+// Input
+class Input {
+    /**
+     * @type {string, boolean}
+     */
+    keyDownMap;
+    
+    constructor() {
+        this.keyDownMap = {};
+
+        this.onKeyDown = this.onKeyDown.bind(this);
+        this.onKeyUp = this.onKeyUp.bind(this);
+        window.addEventListener('keydown', this.onKeyDown);
+        window.addEventListener('keyup', this.onKeyUp);
+    }
+
+    /**
+     * @param {string} key 
+     */
+    getKey(key) {
+        if (typeof this.keyDownMap[key] == 'undefined') {
+            this.keyDownMap[key] = false;
+        }
+
+        return this.keyDownMap[key];
+    }
+
+    /**
+     * @param {KeyboardEvent} event 
+     */
+    onKeyDown(event) {
+        this.keyDownMap[event.key] = true;
+    }
+
+    /**
+     * @param {KeyboardEvent} event 
+     */
+    onKeyUp(event) {
+        this.keyDownMap[event.key] = false;
+    }
+}
 
 // Rendering
 class Sprite {
@@ -315,6 +355,8 @@ class Note {
     }
 }
 
+const input = new Input();
+
 // Beyond here is interpreter related
 /**
  * All the allowed tokens in OneShot
@@ -342,6 +384,7 @@ const TokenType = {
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
     FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, RANDOM: 0,
+    INPUT: 0,
 
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
@@ -422,6 +465,7 @@ class Scanner {
         ['SIZE', TokenType.SIZE],
         ['DRAW', TokenType.DRAW],
         ['RANDOM', TokenType.RANDOM],
+        ['INPUT', TokenType.INPUT],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
         ['PIXELDATA', TokenType.PIXELDATA],
@@ -660,11 +704,6 @@ class AssignmentExpression extends Expression {
 }
 
 class BinaryExpression extends Expression {
-    
-    left;
-    operator;
-    right;
-
     /**
      * @param {Expression} left 
      * @param {Token} operator 
@@ -754,9 +793,6 @@ class BinaryExpression extends Expression {
 }
 
 class GroupingExpression extends Expression {
-    
-    expr;
-
     /**
      * @param {Expression} expr 
      */
@@ -772,9 +808,6 @@ class GroupingExpression extends Expression {
 }
 
 class LiteralExpression extends Expression { 
-
-    value;
-
     constructor(value) {
         super();
 
@@ -787,11 +820,6 @@ class LiteralExpression extends Expression {
 }
 
 class LogicalExpression extends Expression {
-
-    left;
-    operator;
-    right;
-
     /**
      * 
      * @param {Expression} left 
@@ -824,10 +852,6 @@ class LogicalExpression extends Expression {
 }
 
 class UnaryExpression extends Expression {
-
-    token;
-    right;
-
     /**
      * 
      * @param {Token} token 
@@ -865,9 +889,6 @@ class UnaryExpression extends Expression {
 }
 
 class VariableExpression extends Expression {
-    
-    name;
-
     /**
      * @param {Token} name 
      */
@@ -887,7 +908,19 @@ class RandomExpression extends Expression {
     interpret(environment) {
         return Math.random();
     }
+}
 
+class InputExpression extends Expression {
+
+    constructor(key) {
+        super();
+
+        this.key = key;
+    }
+
+    interpret(environment) {
+        return input.getKey(this.key.interpret());
+    }
 }
 
 class Statement {
@@ -2230,6 +2263,13 @@ class Parser {
             this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
             this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
             return new RandomExpression();
+        }
+
+        if (this.#match(TokenType.INPUT)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const key = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new InputExpression(key);
         }
 
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
