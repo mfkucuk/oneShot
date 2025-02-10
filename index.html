@@ -21,6 +21,13 @@
 					PRINT "WOW"
 				END
 
+				PRINT(INT("1.5") + 1)
+				PRINT(MAX(2, 5))
+				PRINT(ABS(-5.1))
+				PRINT(FLOOR(5.5))
+				PRINT(CEIL(5.5))
+				PRINT(LERP(0, 11, 1))
+
 				COLOR "lightgrey"
 				FILL ALL
 
@@ -65,17 +72,24 @@
 					FILL ALL
 					DRAW X, Y, "Hero", "Front"
 
-					IF (INPUT("d")) THEN
-						X = X + 1
+					IF (INPUT("W")) THEN
+						Y = Y - 1
 					END
 
-					IF (INPUT("s")) THEN
+					IF (INPUT("A")) THEN
+						X = X - 1
+					END
+
+					IF (INPUT("S")) THEN
 						Y = Y + 1
 					END
 
+					IF (INPUT("D")) THEN 
+						X = X + 1
+					END
 
 					# Close game
-					IF (INPUT("Escape")) THEN
+					IF (INPUT("ESCAPE")) THEN
 						RUNNING = FALSE
 					END
 

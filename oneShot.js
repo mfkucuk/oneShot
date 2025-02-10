@@ -71,6 +71,7 @@ class Input {
      * @param {string} key 
      */
     getKey(key) {
+        key = key.toLocaleUpperCase();
         if (typeof this.keyDownMap[key] == 'undefined') {
             this.keyDownMap[key] = false;
         }
@@ -82,14 +83,14 @@ class Input {
      * @param {KeyboardEvent} event 
      */
     onKeyDown(event) {
-        this.keyDownMap[event.key] = true;
+        this.keyDownMap[event.key.toLocaleUpperCase()] = true;
     }
 
     /**
      * @param {KeyboardEvent} event 
      */
     onKeyUp(event) {
-        this.keyDownMap[event.key] = false;
+        this.keyDownMap[event.key.toLocaleUpperCase()] = false;
     }
 }
 
@@ -384,7 +385,8 @@ const TokenType = {
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
     FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, RANDOM: 0,
-    INPUT: 0,
+    INPUT: 0, INT: 0, MIN: 0, MAX: 0, ABS: 0,
+    FLOOR: 0, CEIL: 0, LERP: 0,
 
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
@@ -466,6 +468,13 @@ class Scanner {
         ['DRAW', TokenType.DRAW],
         ['RANDOM', TokenType.RANDOM],
         ['INPUT', TokenType.INPUT],
+        ['INT', TokenType.INT],
+        ['MIN', TokenType.MIN],
+        ['MAX', TokenType.MAX],
+        ['ABS', TokenType.ABS],
+        ['FLOOR', TokenType.FLOOR],
+        ['CEIL', TokenType.CEIL],
+        ['LERP', TokenType.LERP],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
         ['PIXELDATA', TokenType.PIXELDATA],
@@ -911,7 +920,9 @@ class RandomExpression extends Expression {
 }
 
 class InputExpression extends Expression {
-
+    /**
+     * @param {Expression} key 
+     */
     constructor(key) {
         super();
 
@@ -919,7 +930,121 @@ class InputExpression extends Expression {
     }
 
     interpret(environment) {
-        return input.getKey(this.key.interpret());
+        return input.getKey(this.key.interpret(environment));
+    }
+}
+
+class IntExpression extends Expression {
+    /**
+     * @param {Expression} number 
+     */
+    constructor(number) {
+        super();
+
+        this.number = number;
+    }
+
+    interpret(environment) {
+        return Number(this.number.interpret(environment));
+    }
+}
+
+class MinExpression extends Expression {
+    /**
+     * @param {Expression} value1 
+     * @param {Expression} value2 
+     */
+    constructor(value1, value2) {
+        super();
+
+        this.value1 = value1;
+        this.value2 = value2;
+    }
+
+    interpret(environment) {
+        return Math.min(this.value1.interpret(environment), this.value2.interpret(environment));
+    }
+}
+
+class MaxExpression extends Expression {
+    /**
+     * @param {Expression} value1 
+     * @param {Expression} value2 
+     */
+    constructor(value1, value2) {
+        super();
+
+        this.value1 = value1;
+        this.value2 = value2;
+    }
+
+    interpret(environment) {
+        return Math.max(this.value1.interpret(environment), this.value2.interpret(environment));
+    }
+}
+
+class AbsoluteExpression extends Expression {
+    /**
+     * @param {Expression} number 
+     */
+    constructor(number) {
+        super();
+
+        this.number = number;
+    }
+
+    interpret(environment) {
+        return Math.abs(this.number.interpret(environment));
+    }
+}
+
+class FloorExpression extends Expression {
+    /**
+     * @param {Expression} number 
+     */
+    constructor(number) {
+        super();
+
+        this.number = number;
+    }
+
+    interpret(environment) {
+        return Math.floor(this.number.interpret(environment));
+    }
+}
+
+class CeilExpression extends Expression {
+    /**
+     * @param {Expression} number 
+     */
+    constructor(number) {
+        super();
+
+        this.number = number;
+    }
+
+    interpret(environment) {
+        return Math.ceil(this.number.interpret(environment));
+    }
+}
+
+class LerpExpression extends Expression {
+    /**
+     * @param {Expression} a 
+     * @param {Expression} b 
+     * @param {Expression} t 
+     */
+    constructor(a, b, t) {
+        super();
+
+        this.a = a;
+        this.b = b;
+        this.t = t;
+    }
+
+    interpret(environment) {
+        return (1 - this.t.interpret(environment)) * this.a.interpret(environment) 
+            + this.t.interpret(environment) * this.b.interpret(environment);
     }
 }
 
@@ -931,9 +1056,6 @@ class Statement {
 }
 
 class BlockStatement extends Statement {
-
-    statements;
-
     /**
      * @param {Statement[]} statements 
      */
@@ -2270,6 +2392,63 @@ class Parser {
             const key = this.#expression();
             this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
             return new InputExpression(key);
+        }
+
+        if (this.#match(TokenType.INT)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const number = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new IntExpression(number);
+        }
+
+        if (this.#match(TokenType.MIN)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const value1 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`)
+            const value2 = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new MinExpression(value1, value2);
+        }
+
+        if (this.#match(TokenType.MAX)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const value1 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const value2 = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new MaxExpression(value1, value2);
+        }
+
+        if (this.#match(TokenType.ABS)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const number = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new AbsoluteExpression(number);
+        }
+
+        if (this.#match(TokenType.FLOOR)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const number = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new FloorExpression(number);
+        }
+
+        if (this.#match(TokenType.CEIL)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const number = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new CeilExpression(number);
+        }
+
+        if (this.#match(TokenType.LERP)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const a = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const b = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const t = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new LerpExpression(a, b, t);
         }
 
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
