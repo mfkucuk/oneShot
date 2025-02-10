@@ -6,104 +6,93 @@
 		<script src='oneShot.js'></script>
 	</head>
 	<body>	
-		<canvas id="oneShotCanvas"></canvas>	
-		<pre></pre>
+		<div style="display: flex;">
+			<!-- Container for Textarea and Button -->
+			<div style="display: flex; flex-direction: column; margin-right: 10px;">
+<textarea name="code" id="code" style="width: 200px; height: 150px;">
+PRINT "HELLO, OneShot🏹"
 
+# SPRITES
+SPRITE "CIRCLE"
+	SIZE 4, 4
+	FRAME "FIRST"
+		COLORDATA "#", "#00FF00"
+		PIXELDATA " ## "
+		PIXELDATA "####"
+		PIXELDATA "####"
+		PIXELDATA " ## "
+	END
+END
+
+WINDOW 300, 150
+
+# VARIABLES
+LET X = 0
+LET Y = 0
+LET RUNNING = TRUE
+LET FPS = 60
+
+PRINT "Press ESCAPE To Quit"
+
+WHILE RUNNING THEN
+	COLOR "RED"
+	FILL ALL
+	DRAW X, Y, "CIRCLE", "FIRST"
+
+	IF (INPUT("W")) THEN 
+		Y = Y - 1
+	END
+	IF (INPUT("A")) THEN 
+		X = X - 1
+	END
+	IF (INPUT("S")) THEN 
+		Y = Y + 1
+	END
+	IF (INPUT("D")) THEN
+		X = X + 1
+	END
+
+	IF (INPUT("ESCAPE")) THEN
+		RUNNING = FALSE
+	END
+
+	SLEEP 1000 / FPS
+END
+
+COLOR "WHITE"
+TEXT 95, 75, "GAME OVER!"
+
+PRINT "GAME OVER!"
+
+
+</textarea>
+				<button id="run" style="margin-top: 10px;">Run</button>
+			</div>
+			
+			<!-- Container for Canvas and Preformatted Text -->
+			<div style="display: flex; align-items: flex-start;">
+				<canvas id="one-shot-canvas" style="border: 1px solid #000; margin-right: 10px;" width="300" height="150"></canvas>
+				<pre style="border: 1px solid #000; padding: 10px;"></pre>
+			</div>
+		</div>
+		  
 		<script>
-			const oneShot = new OneShot('oneShotCanvas');
-
-            const code = 
-			`
-				# This is a comment
-				WINDOW 400, 400
-
-				IF (RANDOM() > 0.5) THEN
-					PRINT "WOW"
-				END
-
-				PRINT(INT("1.5") + 1)
-				PRINT(MAX(2, 5))
-				PRINT(ABS(-5.1))
-				PRINT(FLOOR(5.5))
-				PRINT(CEIL(5.5))
-				PRINT(LERP(0, 11, 1))
-
-				COLOR "lightgrey"
-				FILL ALL
-
-				SPRITE "Hero"
-					SIZE 12, 12
-					FRAME "Front"
-						COLORDATA "#", "black"
-						COLORDATA ".", "#FC9"
-						COLORDATA "-", "#9999CC"
-						PIXELDATA "    ####    "
-						PIXELDATA "  ##....##  "
-						PIXELDATA " #........# "
-						PIXELDATA " #........# "
-						PIXELDATA " #.##..##.# "
-						PIXELDATA " #........# "
-						PIXELDATA " #...##...# "
-						PIXELDATA "  #......#  "
-						PIXELDATA " #-######-# "
-						PIXELDATA "#.#------#.#"
-						PIXELDATA " ##--##--## "
-						PIXELDATA "   ##  ##   "
-					END
-				END
-
-				SONG "Test"
-					BPM 480
-					LOOP TRUE
-
-					SHEET
-						GAIN 20
-						TYPE "sine"
-						BAR "C4 D4 E4 F4 G4"
-					END
-				END
-
-				LET X = 0
-				LET Y = 0
-				LET RUNNING = TRUE
-				LET FPS = 60
-
-				WHILE RUNNING THEN
-					FILL ALL
-					DRAW X, Y, "Hero", "Front"
-
-					IF (INPUT("W")) THEN
-						Y = Y - 1
-					END
-
-					IF (INPUT("A")) THEN
-						X = X - 1
-					END
-
-					IF (INPUT("S")) THEN
-						Y = Y + 1
-					END
-
-					IF (INPUT("D")) THEN 
-						X = X + 1
-					END
-
-					# Close game
-					IF (INPUT("ESCAPE")) THEN
-						RUNNING = FALSE
-					END
-
-					SLEEP 1000 / FPS
-				END
-
-				PRINT "End of game"
-			`;
+			const oneShot = new OneShot('one-shot-canvas');
+			const codeArea = document.getElementById('code');
+			const runButton = document.getElementById('run');
 
 			oneShot.onPrint = (message) => {
                 document.querySelector('pre').innerText += `> ${message}\n`;
 			}
 
-			oneShot.run(code);
+			runButton.addEventListener('click', async () => {
+				document.querySelector('pre').innerText = '';
+				oneShot.stop();
+				await sleep(100);
+				oneShot.run(codeArea.value);
+			});
+
+			oneShot.run(codeArea.value);
 		</script>
 	</body>
 </html>

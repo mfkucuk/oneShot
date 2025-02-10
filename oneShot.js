@@ -21,6 +21,9 @@ let ctx = null;
  */
 let audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
+// TODO: This is horrible, find another way
+let running = false;
+
 // Helper Functions
 /**
  * Pause execution for [ms] milliseconds
@@ -47,7 +50,12 @@ function isTruthy(object) {
     return true;
 }
 
-
+// Extension methods
+HTMLCanvasElement.prototype.setup = function() {
+    this.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    });
+}
 
 /* OneShot classes */
 
@@ -1187,6 +1195,8 @@ class WindowStatement extends Statement {
             document.body.appendChild(canvas);
         }
 
+        canvas.setup();
+
         ctx = canvas.getContext('2d');
 
         canvas.width = this.widthExpression.interpret(environment);
@@ -1680,7 +1690,7 @@ class WhileBlock extends BlockStatement {
     async interpret(environment) {
         let condition = this.conditionExpression.interpret(environment);
 
-        while (isTruthy(condition)) {
+        while (isTruthy(condition) && running) {
             await this.executeBlock(new Environment(environment));
             condition = this.conditionExpression.interpret(environment);
         }
@@ -1714,7 +1724,7 @@ class ForBlock extends BlockStatement {
         this.initializer.interpret(environment);
 
         let condition = this.condition.interpret(environment);
-        while (isTruthy(condition)) {
+        while (isTruthy(condition) && running) {
             await this.executeBlock(new Environment(environment));
 
             this.increment.interpret(environment);
@@ -2668,6 +2678,8 @@ class OneShot {
     }
 
     async run(source) {
+        running = true;
+
         this.#scanner = new Scanner(source);
         const tokens = this.#scanner.scanTokens();
     
@@ -2676,5 +2688,13 @@ class OneShot {
 
         this.#interpreter = new Interpreter();
         await this.#interpreter.interpret(statements);
+    }
+
+    stop() {
+        running = false;
+
+        if (canvas && ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
     }
 }
