@@ -1,0 +1,30 @@
+# Initialize a non-sorted array
+LET N = 5
+LET ARRAY[N]
+
+ARRAY[0] = 5
+ARRAY[1] = 1
+ARRAY[2] = 4
+ARRAY[3] = 2 
+ARRAY[4] = 3
+
+# Bubble sort
+FOR (LET I = 0 : I < N - 1 : I = I + 1) THEN
+    LET SWAPPED = FALSE
+    FOR (LET J = 0 : J < N - I - 1 : J = J + 1) THEN
+        IF (ARRAY[J] > ARRAY[J + 1]) THEN
+            LET TEMP = ARRAY[J]
+            ARRAY[J] = ARRAY[J + 1]
+            ARRAY[J + 1] = TEMP
+            SWAPPED = TRUE
+        END
+    END
+
+    IF (!SWAPPED) THEN
+        I = N
+    END
+END
+
+FOR (LET I = 0 : I < N : I = I + 1) THEN
+    PRINT ARRAY[I]
+END

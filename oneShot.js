@@ -25,6 +25,12 @@ let audioContext = new (window.AudioContext || window.webkitAudioContext)();
 let running = false;
 
 // Helper Functions
+function assert(condition, message = 'Assertion failed') {
+    if (!condition) {
+        throw new Error(message);
+    }
+}
+
 /**
  * Pause execution for [ms] milliseconds
  * @param {number} ms
@@ -386,8 +392,8 @@ const input = new Input();
  */
 const TokenType = {
     // Single character token types
-    LEFT_P: 0, RIGHT_P: 0, COLON: 0,
-    COMMA: 0, MINUS: 0, PLUS: 0, 
+    LEFT_P: 0, RIGHT_P: 0, LEFT_B: 0, RIGHT_B: 0, 
+    COLON: 0, COMMA: 0, MINUS: 0, PLUS: 0, 
     SLASH: 0, STAR: 0, MOD: 0, HASHTAG: 0,
     
     // One or two character token types
@@ -410,6 +416,9 @@ const TokenType = {
     INPUT: 0, INT: 0, MIN: 0, MAX: 0, ABS: 0,
     FLOOR: 0, CEIL: 0, LERP: 0, SQRT: 0,
 
+    // Array function token types
+    SUM: 0, NORMALIZE: 0,
+
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
     COLORDATA: 0, PIXELDATA: 0,
@@ -417,7 +426,6 @@ const TokenType = {
     // BGM & SFX
     SONG: 0, SHEET: 0, BAR: 0, GAIN: 0,
     BPM: 0, LOOP: 0, TYPE: 0, PLAY: 0, STOP: 0,
-
 
     EOF: 0
 };
@@ -500,6 +508,7 @@ class Scanner {
         ['CEIL', TokenType.CEIL],
         ['LERP', TokenType.LERP],
         ['SQRT', TokenType.SQRT],
+        ['SUM', TokenType.SUM],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
         ['PIXELDATA', TokenType.PIXELDATA],
@@ -546,6 +555,8 @@ class Scanner {
         switch (c) {
             case '(': this.#addToken(TokenType.LEFT_P); break;
             case ')': this.#addToken(TokenType.RIGHT_P); break;
+            case '[': this.#addToken(TokenType.LEFT_B); break;
+            case ']': this.#addToken(TokenType.RIGHT_B); break;
             case ':': this.#addToken(TokenType.COLON); break;
             case ',': this.#addToken(TokenType.COMMA); break;
             case '-': this.#addToken(TokenType.MINUS); break;
@@ -723,17 +734,30 @@ class AssignmentExpression extends Expression {
     /**
      * @param {Token} name 
      * @param {Expression} value 
+     * @param {Expression?} index
      */
-    constructor(name, value) {
+    constructor(name, value, index) {
         super();
 
         this.name = name;
         this.value = value;
+        this.index = index;
     }
 
+    /**
+     * @param {Environment} environment 
+     */
     interpret(environment) {
         const value = this.value.interpret(environment);
-        environment.assign(this.name, value);
+
+        if (this.index) {
+            const array = environment.get(this.name); 
+            const index = this.index.interpret(environment);
+            assert(index >= 0 && index < array.length, 'Index out of bounds');
+            array[index] = value;
+        } else {
+            environment.assign(this.name, value);
+        }
         return null;
     }
 }
@@ -930,14 +954,22 @@ class UnaryExpression extends Expression {
 class VariableExpression extends Expression {
     /**
      * @param {Token} name 
+     * @param {Expression?} index 
      */
-    constructor(name) {
+    constructor(name, index) {
         super();
 
         this.name = name;
+        this.index = index;
     }
 
     interpret(environment) {
+        if (this.index) {
+            const array = environment.get(this.name);
+            const index = this.index.interpret(environment);
+            assert(index >= 0 && index < array.length, 'Index out of bounds');
+            return array[index];
+        }
         return environment.get(this.name)
     }
 }
@@ -1104,6 +1136,31 @@ class SqrtExpression extends Expression {
     }
 }
 
+class SumExpression extends Expression {
+    /**
+     * @param {Expression} name 
+     */
+    constructor(name) {
+        super();
+
+        this.name = name;
+    }
+
+    interpret(environment) {
+        const array = this.name.interpret(environment);
+        assert(array instanceof Array, 'SUM can only be used with arrays');
+        let sum = 0;
+        for (let i = 0; i < array.length; i++) {
+            sum += array[i];
+        }
+
+        return sum;
+    }
+}
+
+////////////////////////////
+//////// STATEMENTS ////////
+////////////////////////////
 class Statement {
     /**
      * @param {Environment} environment 
@@ -1156,9 +1213,6 @@ class ExpressionStatement extends Statement {
 }
 
 class LetStatement extends Statement {
-    name;
-    initializer;
-
     /**
      * @param {Token} name 
      * @param {Expression} initializer 
@@ -1177,6 +1231,31 @@ class LetStatement extends Statement {
         }
 
         environment.define(this.name.lexeme, value);
+        return null;
+    }
+}
+
+class LetArrayStatement extends Statement {
+    /**
+     * @param {Token} name 
+     * @param {Expression} size 
+     */
+    constructor(name, size) {
+        super();
+
+        this.name = name;
+        this.size = size;
+    }
+
+    async interpret(environment) {
+        const size = this.size.interpret(environment);
+
+        if (!Number.isInteger(size) || size < 0) {
+            throw new Error(`Invalid array size for '${this.name.lexeme}': ${size}`);
+        }
+
+        const array = new Array(size).fill(null);
+        environment.define(this.name.lexeme, array);
         return null;
     }
 }
@@ -1917,6 +1996,12 @@ class Parser {
         const name = this.#consume(TokenType.IDENTIFIER, 'Expected variable name.');
 
         let initializer = null;
+        if (this.#match(TokenType.LEFT_B)) {
+            initializer = this.#expression();
+            this.#consume(TokenType.RIGHT_B, 'Missing bracket ]');
+            return new LetArrayStatement(name, initializer);
+        }
+
         if (this.#match(TokenType.EQUAL)) {
             initializer = this.#expression();
         }
@@ -2321,7 +2406,7 @@ class Parser {
 
             if (expression instanceof VariableExpression) {
                 const name = expression.name;
-                return new AssignmentExpression(name, value);
+                return new AssignmentExpression(name, value, expression.index);
             }
 
             throw new Error('Invalid assignment target');
@@ -2430,7 +2515,14 @@ class Parser {
         }
 
         if (this.#match(TokenType.IDENTIFIER)) {
-            return new VariableExpression(this.#previous());
+            const name = this.#previous();
+
+            if (this.#match(TokenType.LEFT_B)) {
+                const index = this.#expression();
+                this.#consume(TokenType.RIGHT_B, 'Missing bracket ]');
+                return new VariableExpression(name, index);
+            }
+            return new VariableExpression(name);
         }
 
         if (this.#match(TokenType.LEFT_P)) {
@@ -2524,6 +2616,13 @@ class Parser {
             return new SqrtExpression(number);
         }
 
+        if (this.#match(TokenType.SUM)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const identifier = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new SumExpression(identifier);
+        }
+
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
     }
 
@@ -2571,7 +2670,7 @@ class Parser {
             return this.#advance();
         }
 
-        throw new SyntaxError(errorMessage);
+        throw new SyntaxError(`${this.#peek().line}: ${errorMessage}`);
     }
 }
 
