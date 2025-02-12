@@ -56,6 +56,16 @@ function isTruthy(object) {
     return true;
 }
 
+function aabb(x1, y1, w1, h1, x2, y2, w2, h2) {
+    return (
+        x1 < x2 + w2 &&  // Right edge of rect1 is past the left edge of rect2
+        x1 + w1 > x2 &&  // Left edge of rect1 is past the right edge of rect2
+        y1 < y2 + h2 &&  // Bottom edge of rect1 is past the top edge of rect2
+        y1 + h1 > y2     // Top edge of rect1 is past the bottom edge of rect2
+    );
+}
+
+
 // Extension methods
 HTMLCanvasElement.prototype.setup = function() {
     this.addEventListener('contextmenu', (event) => {
@@ -419,6 +429,9 @@ const TokenType = {
     // Array function token types
     SUM: 0, NORMALIZE: 0,
 
+    // Physics
+    COLLIDE: 0,
+
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
     COLORDATA: 0, PIXELDATA: 0,
@@ -509,6 +522,7 @@ class Scanner {
         ['LERP', TokenType.LERP],
         ['SQRT', TokenType.SQRT],
         ['SUM', TokenType.SUM],
+        ['COLLIDE', TokenType.COLLIDE],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
         ['PIXELDATA', TokenType.PIXELDATA],
@@ -717,6 +731,9 @@ class Scanner {
     }
 }
 
+////////////////////////////
+//////// EXPRESSION ////////
+////////////////////////////
 class Expression {
     /**
      * @param {Environment} expression 
@@ -1155,6 +1172,45 @@ class SumExpression extends Expression {
         }
 
         return sum;
+    }
+}
+
+class CollideExpression extends Expression {
+    /**
+     * 
+     * @param {Expression} x1 
+     * @param {Expression} y1 
+     * @param {Expression} w1 
+     * @param {Expression} h1 
+     * @param {Expression} x2 
+     * @param {Expression} y2 
+     * @param {Expression} w2 
+     * @param {Expression} h2 
+     */
+    constructor(x1, y1, w1, h1, x2, y2, w2, h2) {
+        super();
+
+        this.x1 = x1;
+        this.y1 = y1;
+        this.w1 = w1;
+        this.h1 = h1;
+        this.x2 = x2;
+        this.y2 = y2;
+        this.w2 = w2;
+        this.h2 = h2;
+    }
+
+    interpret(environment) {
+        return aabb(
+            this.x1.interpret(environment),
+            this.y1.interpret(environment),
+            this.w1.interpret(environment),
+            this.h1.interpret(environment),
+            this.x2.interpret(environment),
+            this.y2.interpret(environment),
+            this.w2.interpret(environment),
+            this.h2.interpret(environment),
+        );
     }
 }
 
@@ -2621,6 +2677,27 @@ class Parser {
             const identifier = this.#expression();
             this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
             return new SumExpression(identifier);
+        }
+
+        if (this.#match(TokenType.COLLIDE)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const x1 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const y1 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const w1 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const h1 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const x2 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const y2 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const w2 = this.#expression();
+            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
+            const h2 = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new CollideExpression(x1, y1, w1, h1, x2, y2, w2, h2);
         }
 
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);

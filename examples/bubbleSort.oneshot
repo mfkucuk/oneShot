@@ -2,11 +2,9 @@
 LET N = 5
 LET ARRAY[N]
 
-ARRAY[0] = 5
-ARRAY[1] = 1
-ARRAY[2] = 4
-ARRAY[3] = 2 
-ARRAY[4] = 3
+FOR (LET I = 0 : I < N : I = I + 1) THEN
+    ARRAY[I] = FLOOR(RANDOM() * 1000)
+END
 
 # Bubble sort
 FOR (LET I = 0 : I < N - 1 : I = I + 1) THEN
