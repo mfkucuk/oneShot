@@ -2,7 +2,6 @@
 <html>
 	<head>
     	<title>OneShot</title>
-
 		<script src='oneShot.js'></script>
 	</head>
 	<body>	
@@ -63,10 +62,10 @@ COLOR "WHITE"
 TEXT 95, 75, "GAME OVER!"
 
 PRINT "GAME OVER!"
-
-
 </textarea>
 				<button id="run" style="margin-top: 10px;">Run</button>
+				<button id="upload" style="margin-top: 10px;">Upload</button>
+				<input type="file" id="file-input" accept=".oneshot" style="display: none;">
 			</div>
 			
 			<!-- Container for Canvas and Preformatted Text -->
@@ -80,18 +79,43 @@ PRINT "GAME OVER!"
 			const oneShot = new OneShot('one-shot-canvas');
 			const codeArea = document.getElementById('code');
 			const runButton = document.getElementById('run');
+			const uploadButton = document.getElementById('upload');
+			const fileInput = document.getElementById('file-input');
 
+			// Redirect print messages to the <pre> tag
 			oneShot.onPrint = (message) => {
                 document.querySelector('pre').innerText += `> ${message}\n`;
 			}
 
+			// Run Button Event
 			runButton.addEventListener('click', async () => {
-				document.querySelector('pre').innerText = '';
 				oneShot.stop();
-				await sleep(100);
+				await sleep(100);  // Ensure clean stop before rerunning
+				document.querySelector('pre').innerText = '';
 				oneShot.run(codeArea.value);
 			});
 
+			// Upload Button Event
+			uploadButton.addEventListener('click', () => {
+				fileInput.click();  // Trigger file input click
+			});
+
+			// File Input Change Event
+			fileInput.addEventListener('change', (event) => {
+				const file = event.target.files[0];
+
+				if (file) {
+					const reader = new FileReader();
+
+					reader.onload = (e) => {
+						codeArea.value = e.target.result;  // Set file content to textarea
+					};
+
+					reader.readAsText(file);  // Read file as plain text
+				}
+			});
+
+			// Auto-run the default code on page load
 			oneShot.run(codeArea.value);
 		</script>
 	</body>

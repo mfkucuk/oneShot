@@ -1,0 +1,15 @@
+LET N = 7
+
+LET ISPRIME = TRUE
+
+FOR (LET I = 2 : I < N / 2 : I = I + 1) THEN
+    IF (FLOOR(N / I) == N / I) THEN
+        ISPRIME = FALSE
+    END
+END
+
+IF (ISPRIME) THEN
+    PRINT N + " IS PRIME"
+ELSE 
+    PRINT N + " IS NOT PRIME"
+END

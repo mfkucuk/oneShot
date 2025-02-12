@@ -62,17 +62,22 @@ HTMLCanvasElement.prototype.setup = function() {
 // Input
 class Input {
     /**
-     * @type {string, boolean}
+     * @type {Map<string, boolean>}
      */
     keyDownMap;
     
     constructor() {
         this.keyDownMap = {};
 
+        this.mouseX = 0;
+        this.mouseY = 0;
+
         this.onKeyDown = this.onKeyDown.bind(this);
         this.onKeyUp = this.onKeyUp.bind(this);
+        this.onMouseMove = this.onMouseMove.bind(this);
         window.addEventListener('keydown', this.onKeyDown);
         window.addEventListener('keyup', this.onKeyUp);
+        window.addEventListener('mousemove', this.onMouseMove);
     }
 
     /**
@@ -99,6 +104,15 @@ class Input {
      */
     onKeyUp(event) {
         this.keyDownMap[event.key.toLocaleUpperCase()] = false;
+    }
+
+    /**
+     * @param {MouseEvent} event 
+     */
+    onMouseMove(event) {
+        const rect = canvas?.getBoundingClientRect();
+        this.mouseX = event.x - rect?.left;
+        this.mouseY = event.y - rect?.top;
     }
 }
 
@@ -388,7 +402,7 @@ const TokenType = {
     // Keyword token types
     AND: 0, OR: 0, TRUE: 0, FALSE: 0,
     IF: 0, ELSE: 0, FOR: 0, WHILE: 0, END: 0, THEN: 0,
-    LET: 0, FUN: 0, NULL: 0, ALL: 0,
+    LET: 0, FUN: 0, NULL: 0, ALL: 0, MOUSEX: 0, MOUSEY: 0,
 
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
@@ -463,6 +477,8 @@ class Scanner {
         ['FUN', TokenType.FUN],
         ['NULL', TokenType.NULL],
         ['ALL', TokenType.ALL],
+        ['MOUSEX', TokenType.MOUSEX],
+        ['MOUSEY', TokenType.MOUSEY],
         ['DEBUG', TokenType.DEBUG],
         ['PRINT', TokenType.PRINT],
         ['WINDOW', TokenType.WINDOW],
@@ -1053,6 +1069,18 @@ class LerpExpression extends Expression {
     interpret(environment) {
         return (1 - this.t.interpret(environment)) * this.a.interpret(environment) 
             + this.t.interpret(environment) * this.b.interpret(environment);
+    }
+}
+
+class MouseXExpression extends Expression {
+    interpret(environment) {
+        return input.mouseX;
+    }
+}
+
+class MouseYExpression extends Expression {
+    interpret(environment) {
+        return input.mouseY;
     }
 }
 
@@ -2459,6 +2487,14 @@ class Parser {
             const t = this.#expression();
             this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
             return new LerpExpression(a, b, t);
+        }
+
+        if (this.#match(TokenType.MOUSEX)) {
+            return new MouseXExpression();
+        }
+
+        if (this.#match(TokenType.MOUSEY)) {
+            return new MouseYExpression();
         }
 
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
