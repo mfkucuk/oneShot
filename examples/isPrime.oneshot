@@ -2,8 +2,8 @@ LET N = 7
 
 LET ISPRIME = TRUE
 
-FOR (LET I = 2 : I < N / 2 : I = I + 1) THEN
-    IF (FLOOR(N / I) == N / I) THEN
+FOR (LET I = 2 : I < SQRT(N) : I = I + 1) THEN
+    IF (N % I == 0) THEN
         ISPRIME = FALSE
     END
 END

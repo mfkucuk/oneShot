@@ -388,7 +388,7 @@ const TokenType = {
     // Single character token types
     LEFT_P: 0, RIGHT_P: 0, COLON: 0,
     COMMA: 0, MINUS: 0, PLUS: 0, 
-    SLASH: 0, STAR: 0, HASHTAG: 0,
+    SLASH: 0, STAR: 0, MOD: 0, HASHTAG: 0,
     
     // One or two character token types
     NOT: 0, NOT_EQUAL: 0,
@@ -408,7 +408,7 @@ const TokenType = {
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
     FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, RANDOM: 0,
     INPUT: 0, INT: 0, MIN: 0, MAX: 0, ABS: 0,
-    FLOOR: 0, CEIL: 0, LERP: 0,
+    FLOOR: 0, CEIL: 0, LERP: 0, SQRT: 0,
 
     // Sprite
     SPRITE: 0, SIZE: 0, FRAME: 0, 
@@ -499,6 +499,7 @@ class Scanner {
         ['FLOOR', TokenType.FLOOR],
         ['CEIL', TokenType.CEIL],
         ['LERP', TokenType.LERP],
+        ['SQRT', TokenType.SQRT],
         ['FRAME', TokenType.FRAME],
         ['COLORDATA', TokenType.COLORDATA],
         ['PIXELDATA', TokenType.PIXELDATA],
@@ -551,6 +552,7 @@ class Scanner {
             case '+': this.#addToken(TokenType.PLUS); break;
             case '/': this.#addToken(TokenType.SLASH); break;
             case '*': this.#addToken(TokenType.STAR); break;
+            case '%': this.#addToken(TokenType.MOD); break;
             case '!': this.#addToken(TokenType.NOT); break;
             case '=': 
                 this.#addToken(this.#match('=') ? TokenType.EQUAL_EQUAL : TokenType.EQUAL);
@@ -783,6 +785,10 @@ class BinaryExpression extends Expression {
                 }
 
                 break;
+
+            case TokenType.MOD:
+                this.#checkNumberOperands(leftValue, rightValue);
+                return parseFloat(leftValue) % parseFloat(rightValue);
 
             case TokenType.GREATER:
                 this.#checkNumberOperands(leftValue, rightValue);
@@ -1081,6 +1087,20 @@ class MouseXExpression extends Expression {
 class MouseYExpression extends Expression {
     interpret(environment) {
         return input.mouseY;
+    }
+}
+
+class SqrtExpression extends Expression {
+    /**
+     * @param {Expression} number 
+     */
+    constructor(number) {
+        super();
+        this.number = number;
+    }
+
+    interpret(environment) {
+        return Math.sqrt(this.number.interpret(environment));
     }
 }
 
@@ -2373,7 +2393,7 @@ class Parser {
     #factor() {
         let expression = this.#unary();
 
-        while (this.#match(TokenType.SLASH, TokenType.STAR)) {
+        while (this.#match(TokenType.SLASH, TokenType.STAR, TokenType.MOD)) {
             const operator = this.#previous();
             const right = this.#unary();
             expression = new BinaryExpression(expression, operator, right);
@@ -2495,6 +2515,13 @@ class Parser {
 
         if (this.#match(TokenType.MOUSEY)) {
             return new MouseYExpression();
+        }
+
+        if (this.#match(TokenType.SQRT)) {
+            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            const number = this.#expression();
+            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
+            return new SqrtExpression(number);
         }
 
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
