@@ -115,6 +115,21 @@ PRINT "GAME OVER!"
 				}
 			});
 
+			codeArea.addEventListener('keydown', (event) => {
+				if (event.key == 'Tab') {
+					event.preventDefault();
+					const textarea = event.target;
+					const start = textarea.selectionStart;
+					const end = textarea.selectionEnd;
+
+					// Insert 4 spaces at the cursor position
+					textarea.value = textarea.value.substring(0, start) + "    " + textarea.value.substring(end);
+
+					// Move the cursor after the inserted spaces
+					textarea.selectionStart = textarea.selectionEnd = start + 4;
+				}
+			});
+
 			// Auto-run the default code on page load
 			oneShot.run(codeArea.value);
 		</script>

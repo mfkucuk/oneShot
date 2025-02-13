@@ -419,6 +419,7 @@ const TokenType = {
     AND: 0, OR: 0, TRUE: 0, FALSE: 0,
     IF: 0, ELSE: 0, FOR: 0, WHILE: 0, END: 0, THEN: 0,
     LET: 0, FUN: 0, NULL: 0, ALL: 0, MOUSEX: 0, MOUSEY: 0,
+    FUNC: 0, RETURN: 0,
 
     // Built-in function token types
     DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
@@ -481,6 +482,41 @@ class Token {
     }
 }
 
+class Func {
+    /**
+     * @param {FunctionStatement} declaration 
+     */
+    constructor(declaration, arity) {
+        this.declaration = declaration;
+        this.arity = arity;
+    }
+
+    /**
+     * @param {Environment} environment 
+     * @param {*[]} args 
+     */
+    async call(environment, args) {
+        const localEnvironment = new Environment(environment);
+        for (let i = 0; i < this.declaration.params.length; i++) {
+            localEnvironment.define(this.declaration.params[i].lexeme, args[i]);
+        } 
+
+        try {
+            await this.declaration.executeBlock(localEnvironment);
+        } catch (returnValue) {
+            return returnValue.value;
+        }
+        return null;
+    }
+}
+
+class Return extends Error {
+    constructor(value) {
+        super();
+        this.value = value;
+    }
+}
+
 class Scanner {
     
     static #keywords = new Map([
@@ -500,6 +536,8 @@ class Scanner {
         ['ALL', TokenType.ALL],
         ['MOUSEX', TokenType.MOUSEX],
         ['MOUSEY', TokenType.MOUSEY],
+        ['FUNC', TokenType.FUNC],
+        ['RETURN', TokenType.RETURN],
         ['DEBUG', TokenType.DEBUG],
         ['PRINT', TokenType.PRINT],
         ['WINDOW', TokenType.WINDOW],
@@ -738,7 +776,7 @@ class Expression {
     /**
      * @param {Environment} expression 
      */
-    interpret(environment) {}
+    async interpret(environment) {}
     resolve() {}
     analyse() {}
 }
@@ -764,12 +802,12 @@ class AssignmentExpression extends Expression {
     /**
      * @param {Environment} environment 
      */
-    interpret(environment) {
+    async interpret(environment) {
         const value = this.value.interpret(environment);
 
         if (this.index) {
             const array = environment.get(this.name); 
-            const index = this.index.interpret(environment);
+            const index = await this.index.interpret(environment);
             assert(index >= 0 && index < array.length, 'Index out of bounds');
             array[index] = value;
         } else {
@@ -793,9 +831,9 @@ class BinaryExpression extends Expression {
         this.right = right;
     }
 
-    interpret(environment) {
-        const leftValue = this.left.interpret(environment);
-        const rightValue = this.right.interpret(environment);
+    async interpret(environment) {
+        const leftValue = await this.left.interpret(environment);
+        const rightValue = await this.right.interpret(environment);
 
         switch (this.operator.type) {
             case TokenType.MINUS:
@@ -872,6 +910,33 @@ class BinaryExpression extends Expression {
     }
 }
 
+class CallExpression extends Expression {
+    /**
+     * @param {Expression} callee 
+     * @param {Token} paren 
+     * @param {Expression[]} args 
+     */
+    constructor(callee, paren, args) {
+        super();
+        this.callee = callee;
+        this.paren = paren;
+        this.args = args;
+    }
+
+    async interpret(environment) {
+        const callee = await this.callee.interpret(environment);
+    
+        assert(callee.arity == this.args.length, 'Incorrect number of arguments');
+    
+        const args = [];
+        for (const arg of this.args) {
+            args.push(await arg.interpret(environment));
+        }
+    
+        return await callee.call(environment, args);
+    }    
+}
+
 class GroupingExpression extends Expression {
     /**
      * @param {Expression} expr 
@@ -882,8 +947,8 @@ class GroupingExpression extends Expression {
         this.expr = expr;
     }
 
-    interpret(environment) {
-        return this.expr.interpret(environment);
+    async interpret(environment) {
+        return await this.expr.interpret(environment);
     }
 }
 
@@ -894,7 +959,7 @@ class LiteralExpression extends Expression {
         this.value = value;
     }
 
-    interpret(environment) {
+    async interpret(environment) {
         return this.value;
     }
 }
@@ -914,8 +979,8 @@ class LogicalExpression extends Expression {
         this.right = right;
     }
 
-    interpret(environment) {
-        const leftValue = this.left.interpret(environment);
+    async interpret(environment) {
+        const leftValue = await this.left.interpret(environment);
 
         if (this.operator.type == TokenType.OR) {
             if (isTruthy(leftValue)) {
@@ -927,7 +992,7 @@ class LogicalExpression extends Expression {
             }
         }
 
-        return this.right.interpret(environment);
+        return await this.right.interpret(environment);
     }
 }
 
@@ -944,8 +1009,8 @@ class UnaryExpression extends Expression {
         this.right = right;
     }
 
-    interpret(environment) {
-        const rightValue = this.right.interpret(environment);
+    async interpret(environment) {
+        const rightValue = await this.right.interpret(environment);
 
         switch (this.token.type) {
             case TokenType.MINUS:
@@ -980,10 +1045,10 @@ class VariableExpression extends Expression {
         this.index = index;
     }
 
-    interpret(environment) {
+    async interpret(environment) {
         if (this.index) {
             const array = environment.get(this.name);
-            const index = this.index.interpret(environment);
+            const index = await this.index.interpret(environment);
             assert(index >= 0 && index < array.length, 'Index out of bounds');
             return array[index];
         }
@@ -993,7 +1058,7 @@ class VariableExpression extends Expression {
 
 class RandomExpression extends Expression {
 
-    interpret(environment) {
+    async interpret(environment) {
         return Math.random();
     }
 }
@@ -1008,8 +1073,8 @@ class InputExpression extends Expression {
         this.key = key;
     }
 
-    interpret(environment) {
-        return input.getKey(this.key.interpret(environment));
+    async interpret(environment) {
+        return input.getKey(await this.key.interpret(environment));
     }
 }
 
@@ -1023,8 +1088,8 @@ class IntExpression extends Expression {
         this.number = number;
     }
 
-    interpret(environment) {
-        return Number(this.number.interpret(environment));
+    async interpret(environment) {
+        return Number(await this.number.interpret(environment));
     }
 }
 
@@ -1040,8 +1105,8 @@ class MinExpression extends Expression {
         this.value2 = value2;
     }
 
-    interpret(environment) {
-        return Math.min(this.value1.interpret(environment), this.value2.interpret(environment));
+    async interpret(environment) {
+        return Math.min(await this.value1.interpret(environment), await this.value2.interpret(environment));
     }
 }
 
@@ -1057,8 +1122,8 @@ class MaxExpression extends Expression {
         this.value2 = value2;
     }
 
-    interpret(environment) {
-        return Math.max(this.value1.interpret(environment), this.value2.interpret(environment));
+    async interpret(environment) {
+        return Math.max(await this.value1.interpret(environment), await this.value2.interpret(environment));
     }
 }
 
@@ -1072,8 +1137,8 @@ class AbsoluteExpression extends Expression {
         this.number = number;
     }
 
-    interpret(environment) {
-        return Math.abs(this.number.interpret(environment));
+    async interpret(environment) {
+        return Math.abs(await this.number.interpret(environment));
     }
 }
 
@@ -1087,8 +1152,8 @@ class FloorExpression extends Expression {
         this.number = number;
     }
 
-    interpret(environment) {
-        return Math.floor(this.number.interpret(environment));
+    async interpret(environment) {
+        return Math.floor(await this.number.interpret(environment));
     }
 }
 
@@ -1102,8 +1167,8 @@ class CeilExpression extends Expression {
         this.number = number;
     }
 
-    interpret(environment) {
-        return Math.ceil(this.number.interpret(environment));
+    async interpret(environment) {
+        return Math.ceil(await this.number.interpret(environment));
     }
 }
 
@@ -1121,20 +1186,20 @@ class LerpExpression extends Expression {
         this.t = t;
     }
 
-    interpret(environment) {
-        return (1 - this.t.interpret(environment)) * this.a.interpret(environment) 
-            + this.t.interpret(environment) * this.b.interpret(environment);
+    async interpret(environment) {
+        return (1 - await this.t.interpret(environment)) * await this.a.interpret(environment) 
+            + await this.t.interpret(environment) * await this.b.interpret(environment);
     }
 }
 
 class MouseXExpression extends Expression {
-    interpret(environment) {
+    async interpret(environment) {
         return input.mouseX;
     }
 }
 
 class MouseYExpression extends Expression {
-    interpret(environment) {
+    async interpret(environment) {
         return input.mouseY;
     }
 }
@@ -1148,8 +1213,8 @@ class SqrtExpression extends Expression {
         this.number = number;
     }
 
-    interpret(environment) {
-        return Math.sqrt(this.number.interpret(environment));
+    async interpret(environment) {
+        return Math.sqrt(await this.number.interpret(environment));
     }
 }
 
@@ -1163,8 +1228,8 @@ class SumExpression extends Expression {
         this.name = name;
     }
 
-    interpret(environment) {
-        const array = this.name.interpret(environment);
+    async interpret(environment) {
+        const array = await this.name.interpret(environment);
         assert(array instanceof Array, 'SUM can only be used with arrays');
         let sum = 0;
         for (let i = 0; i < array.length; i++) {
@@ -1200,17 +1265,37 @@ class CollideExpression extends Expression {
         this.h2 = h2;
     }
 
-    interpret(environment) {
+    async interpret(environment) {
         return aabb(
-            this.x1.interpret(environment),
-            this.y1.interpret(environment),
-            this.w1.interpret(environment),
-            this.h1.interpret(environment),
-            this.x2.interpret(environment),
-            this.y2.interpret(environment),
-            this.w2.interpret(environment),
-            this.h2.interpret(environment),
+            await this.x1.interpret(environment),
+            await this.y1.interpret(environment),
+            await this.w1.interpret(environment),
+            await this.h1.interpret(environment),
+            await this.x2.interpret(environment),
+            await this.y2.interpret(environment),
+            await this.w2.interpret(environment),
+            await this.h2.interpret(environment),
         );
+    }
+}
+
+class GetExpression extends Expression {
+    /**
+     * @param {Expression} object 
+     * @param {Token} property 
+     */
+    constructor(object, property) {
+        super();
+        this.object = object;
+        this.property = property;
+    }
+
+    async interpret(environment) {
+        const obj = await this.object.interpret(environment);
+
+        assert(obj && typeof obj == 'object', `Cannot access property ${this.property.lexeme} on a non-object.`);
+
+        return obj[this.property.lexeme];
     }
 }
 
@@ -1250,9 +1335,6 @@ class BlockStatement extends Statement {
 }
 
 class ExpressionStatement extends Statement {
-
-    expr;
-
     /**
      * @param {Expression} expr 
      */
@@ -1263,7 +1345,27 @@ class ExpressionStatement extends Statement {
     }
 
     async interpret(environment) {
-        this.expr.interpret(environment);
+        await this.expr.interpret(environment);
+        return null;
+    }
+}
+
+class FunctionStatement extends BlockStatement {
+    /**
+     * 
+     * @param {Token} name 
+     * @param {Token[]} params 
+     * @param {Statement[]} body 
+     */
+    constructor(name, params, body) {
+        super(body);
+        this.name = name;
+        this.params = params;
+    }
+
+    async interpret(environment) {
+        const func = new Func(this, this.params.length);   
+        environment.define(this.name.lexeme, func);
         return null;
     }
 }
@@ -1283,7 +1385,7 @@ class LetStatement extends Statement {
     async interpret(environment) {
         let value = null;
         if (this.initializer != null) {
-            value = this.initializer.interpret(environment);
+            value = await this.initializer.interpret(environment);
         }
 
         environment.define(this.name.lexeme, value);
@@ -1304,7 +1406,7 @@ class LetArrayStatement extends Statement {
     }
 
     async interpret(environment) {
-        const size = this.size.interpret(environment);
+        const size = await this.size.interpret(environment);
 
         if (!Number.isInteger(size) || size < 0) {
             throw new Error(`Invalid array size for '${this.name.lexeme}': ${size}`);
@@ -1330,15 +1432,13 @@ class DebugStatement extends Statement {
     }
 
     async interpret(environment) {
-        console.log(this.expr.interpret(environment));
+        console.log(await this.expr.interpret(environment));
         return null;
     }
 }
 
 class PrintStatement extends Statement {
-
     #printCallback;
-    expr
 
     /**
      * @param {Expression} expr 
@@ -1351,8 +1451,27 @@ class PrintStatement extends Statement {
     }
 
     async interpret(environment) {
-        this.#printCallback(this.expr.interpret(environment));
+        this.#printCallback(await this.expr.interpret(environment));
         return null;
+    }
+}
+
+class ReturnStatement extends Statement {
+    /**
+     * @param {Token} keyword 
+     * @param {Expression} returnValue 
+     */
+    constructor(keyword, returnValue) {
+        super();
+        this.keyword = keyword;
+        this.returnValue = returnValue;
+    }
+
+    async interpret(environment) {
+        let value = null;
+        if (this.returnValue != null) value = await this.returnValue.interpret(environment);
+        
+        throw new Return(value);
     }
 }
 
@@ -1382,8 +1501,8 @@ class WindowStatement extends Statement {
 
         ctx = canvas.getContext('2d');
 
-        canvas.width = this.widthExpression.interpret(environment);
-        canvas.height = this.heightExpression.interpret(environment);
+        canvas.width = await this.widthExpression.interpret(environment);
+        canvas.height = await this.heightExpression.interpret(environment);
 
         return null;
     }
@@ -1404,7 +1523,7 @@ class ColorStatement extends Statement {
     }
 
     async interpret(environment) {
-        ctx.fillStyle = this.colorExpression.interpret(environment);
+        ctx.fillStyle = await this.colorExpression.interpret(environment);
         return null;
     }
 }
@@ -1437,10 +1556,10 @@ class FillStatement extends Statement {
             return null;
         }
 
-        const x = this.xExpression.interpret(environment);
-        const y = this.yExpression.interpret(environment);
-        const w = this.widthExpression.interpret(environment);
-        const h = this.heightExpression.interpret(environment);
+        const x = await this.xExpression.interpret(environment);
+        const y = await this.yExpression.interpret(environment);
+        const w = await this.widthExpression.interpret(environment);
+        const h = await this.heightExpression.interpret(environment);
 
         ctx.fillRect(x, y, w, h);
         return null;
@@ -1467,9 +1586,9 @@ class TextStatement extends Statement {
     }
 
     async interpret(environment) {
-        const x = this.xExpression.interpret(environment);
-        const y = this.yExpression.interpret(environment);
-        const text = this.textExpression.interpret(environment);
+        const x = await this.xExpression.interpret(environment);
+        const y = await this.yExpression.interpret(environment);
+        const text = await this.textExpression.interpret(environment);
 
         ctx.font = '20px dejavu, monospace';
         ctx.fillText(text, x, y);
@@ -1491,7 +1610,7 @@ class SleepStatement extends Statement {
     }
 
     async interpret(environment) {
-        const sleepDuration = this.sleepExpression.interpret(environment);
+        const sleepDuration = await this.sleepExpression.interpret(environment);
         await sleep(sleepDuration);
         return null;
     }
@@ -1520,8 +1639,8 @@ class SizeStatement extends Statement {
             throw new Error('SIZE can only be used in SPRITE block');
         }
 
-        const sizeXValue = this.sizeXExpression.interpret(environment);
-        const sizeYValue = this.sizeYExpression.interpret(environment);
+        const sizeXValue = await this.sizeXExpression.interpret(environment);
+        const sizeYValue = await this.sizeYExpression.interpret(environment);
 
         currentSprite.sizeX = sizeXValue;
         currentSprite.sizeY = sizeYValue;
@@ -1553,10 +1672,10 @@ class DrawStatement extends Statement {
     }
 
     async interpret(environment) {
-        const x = this.xExpression.interpret(environment);
-        const y = this.yExpression.interpret(environment);
-        const name = this.nameExpression.interpret(environment);
-        const frameSpec = this.frameIndexExpression.interpret(environment);
+        const x = await this.xExpression.interpret(environment);
+        const y = await this.yExpression.interpret(environment);
+        const name = await this.nameExpression.interpret(environment);
+        const frameSpec = await this.frameIndexExpression.interpret(environment);
 
         const sprite = environment.getSprite(name);
 
@@ -1608,8 +1727,8 @@ class ColorDataStatement extends Statement {
     }
 
     async interpret(environment) {
-        const charValue = this.charExpression.interpret(environment);
-        const colorValue = this.colorExpression.interpret(environment);
+        const charValue = await this.charExpression.interpret(environment);
+        const colorValue = await this.colorExpression.interpret(environment);
 
         if (!environment.currentSprite) {
             throw new Error('COLORDATA can be used in SPRITE block')
@@ -1636,7 +1755,7 @@ class PixelDataStatement extends Statement {
     }
 
     async interpret(environment) {
-        const dataValue = this.dataExpression.interpret(environment);
+        const dataValue = await this.dataExpression.interpret(environment);
         const currentSprite = environment.currentSprite;
 
         if (!currentSprite) {
@@ -1672,7 +1791,7 @@ class BarStatement extends Statement {
     }
 
     async interpret(environment) {
-        const bar = this.barExpression.interpret(environment);
+        const bar = await this.barExpression.interpret(environment);
         const currentSong = environment.currentSong;
         const currentSheet = currentSong.currentSheet;
 
@@ -1700,7 +1819,7 @@ class GainStatement extends Statement {
     }
 
     async interpret(environment) {
-        const gainValue = this.gainExpression.interpret(environment);
+        const gainValue = await this.gainExpression.interpret(environment);
 
         const currentSong = environment.currentSong;
         currentSong.currentSheet.gain = gainValue / 100;
@@ -1723,7 +1842,7 @@ class BpmStatement extends Statement {
     }
 
     async interpret(environment) {
-        const bpmValue = this.bpmExpression.interpret(environment);
+        const bpmValue = await this.bpmExpression.interpret(environment);
 
         environment.currentSong.bpm = bpmValue;
 
@@ -1745,7 +1864,7 @@ class LoopStatement extends Statement {
     }
 
     async interpret(environment) {
-        const loopValue = this.loopExpression.interpret(environment);
+        const loopValue = await this.loopExpression.interpret(environment);
 
         environment.currentSong.loop = isTruthy(loopValue);
 
@@ -1767,7 +1886,7 @@ class TypeStatement extends Statement {
     }
 
     async interpret(environment) {
-        const waveTypeValue = this.waveTypeExpression.interpret(environment);
+        const waveTypeValue = await this.waveTypeExpression.interpret(environment);
 
         const currentSong = environment.currentSong;
         currentSong.currentSheet.type = waveTypeValue;
@@ -1790,7 +1909,7 @@ class PlayStatement extends Statement {
     }
 
     async interpret(environment) {
-        const song = environment.getSong(this.songNameExpression.interpret(environment));
+        const song = environment.getSong(await this.songNameExpression.interpret(environment));
         song.play();
 
         return null;
@@ -1811,7 +1930,7 @@ class StopStatement extends Statement {
     }
 
     async interpret(environment) {
-        const song = environment.getSong(this.songNameExpression.interpret(environment));
+        const song = environment.getSong(await this.songNameExpression.interpret(environment));
         song.stop();
 
         return null;
@@ -1839,7 +1958,7 @@ class IfStatement extends Statement {
 
     async interpret(environment) {
 
-        const condition = this.conditionExpression.interpret(environment);
+        const condition = await this.conditionExpression.interpret(environment);
 
         if (isTruthy(condition)) {
             for (const statement of this.ifBranch) {
@@ -1871,11 +1990,11 @@ class WhileBlock extends BlockStatement {
     }
 
     async interpret(environment) {
-        let condition = this.conditionExpression.interpret(environment);
+        let condition = await this.conditionExpression.interpret(environment);
 
         while (isTruthy(condition) && running) {
             await this.executeBlock(new Environment(environment));
-            condition = this.conditionExpression.interpret(environment);
+            condition = await this.conditionExpression.interpret(environment);
         }
 
         return null;
@@ -1904,15 +2023,15 @@ class ForBlock extends BlockStatement {
 
     async interpret(environment) {
 
-        this.initializer.interpret(environment);
+        await this.initializer.interpret(environment);
 
-        let condition = this.condition.interpret(environment);
+        let condition = await this.condition.interpret(environment);
         while (isTruthy(condition) && running) {
             await this.executeBlock(new Environment(environment));
 
-            this.increment.interpret(environment);
+            await this.increment.interpret(environment);
 
-            condition = this.condition.interpret(environment);
+            condition = await this.condition.interpret(environment);
         }
 
         return null;
@@ -1934,7 +2053,7 @@ class SpriteBlock extends BlockStatement {
     }
 
     async interpret(environment) {
-        const nameValue = this.nameExpression.interpret(environment);
+        const nameValue = await this.nameExpression.interpret(environment);
 
         environment.addNewSprite(nameValue);
 
@@ -1968,7 +2087,7 @@ class FrameBlock extends BlockStatement {
         }
 
         currentSprite.frameIndex++;
-        currentSprite.currentFrame = new Frame(this.frameNameExpression.interpret(environment));
+        currentSprite.currentFrame = new Frame(await this.frameNameExpression.interpret(environment));
 
         await this.executeBlock(new Environment(environment));
 
@@ -1991,7 +2110,7 @@ class SongBlock extends BlockStatement {
     }
 
     async interpret(environment) {
-        const nameValue = this.nameExpression.interpret(environment);
+        const nameValue = await this.nameExpression.interpret(environment);
 
         environment.addNewSong(nameValue);
 
@@ -2041,11 +2160,36 @@ class Parser {
     }
 
     #declaration() {
+        if (this.#match(TokenType.FUNC)) {
+            return this.#funcDeclaration();
+        }
+
         if (this.#match(TokenType.LET)) {
             return this.#varDeclaration(); 
         }
 
         return this.#statement();
+    }
+
+    #funcDeclaration() {
+        const name = this.#consume(TokenType.IDENTIFIER, 'Functions need a name');
+        this.#consume(TokenType.LEFT_P, 'Expected ( after function name');
+
+        const params = [];
+
+        if (!this.#check(TokenType.RIGHT_P)) {
+            do {
+                assert(params.length < 255, 'Can\'t have more than 255 parameters');
+
+                params.push(this.#consume(TokenType.IDENTIFIER, 'Expect parameter name'));
+            } while (this.#match(TokenType.COMMA));
+        }
+
+        this.#consume(TokenType.RIGHT_P, 'Expected ) after parameters');
+        this.#consume(TokenType.THEN, 'Expected THEN after parameters');
+
+        const body = this.#block();
+        return new FunctionStatement(name, params, body);
     }
 
     #varDeclaration() {
@@ -2072,6 +2216,10 @@ class Parser {
 
         if (this.#match(TokenType.PRINT)) {
             return this.#printStatement();
+        }
+
+        if (this.#match(TokenType.RETURN)) {
+            return this.#returnStatement();
         }
         
         if (this.#match(TokenType.WINDOW)) {
@@ -2201,6 +2349,20 @@ class Parser {
     #printStatement() {
         const expression = this.#expression();
         return new PrintStatement(expression, this.#callbacks.onPrint);
+    }
+
+    #returnStatement() {
+        const keyword = this.#previous();
+        let returnValue = null;
+        
+        if (this.#consume(TokenType.LEFT_P, 'If you don\'t return anything, usage is RETURN ()')) {
+            if (!this.#check(TokenType.RIGHT_P)) {
+                returnValue = this.#expression();
+            }
+            this.#consume(TokenType.RIGHT_P, 'Missing enclosing )');
+        }
+
+        return new ReturnStatement(keyword, returnValue);
     }
 
     #windowStatement() {
@@ -2550,7 +2712,21 @@ class Parser {
             return new UnaryExpression(operator, right);
         }
 
-        return this.#primary();
+        return this.#call();
+    }
+    
+    #call() {
+        let expression = this.#primary();
+
+        while (true) {
+            if (this.#match(TokenType.LEFT_P)) {
+                expression = this.#finishCall(expression);
+            } else {
+                break;
+            }
+        }
+
+        return expression;
     }
 
     #primary() {
@@ -2703,6 +2879,21 @@ class Parser {
         throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
     }
 
+    #finishCall(callee) {
+        const args = [];
+
+        if (!this.#check(TokenType.RIGHT_P)) {
+            do { 
+                assert(args.length < 255, 'Can\'t have more than 255 arguments');
+                args.push(this.#expression());
+            } while (this.#match(TokenType.COMMA));
+        }
+
+        const paren = this.#consume(TokenType.RIGHT_P, 'Expect ) after arguments.');
+
+        return new CallExpression(callee, paren, args);
+    }
+
     #match(...types) {
         for (const type of types) {
             if (this.#check(type)) {
@@ -2736,6 +2927,11 @@ class Parser {
 
     #peek() {
         return this.#tokens[this.#current];
+    }
+
+    #peekNext() {
+        if (this.#isAtEnd()) return null;
+        return this.#tokens[this.#current + 1];
     }
 
     #previous() {

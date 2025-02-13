@@ -1,14 +1,15 @@
-LET N = 7
-
-LET ISPRIME = TRUE
-
-FOR (LET I = 2 : I < SQRT(N) : I = I + 1) THEN
-    IF (N % I == 0) THEN
-        ISPRIME = FALSE
+FUNC CHECKPRIME(N) THEN
+    FOR (LET I = 2 : I < SQRT(N) : I = I + 1) THEN
+        IF (N % I == 0) THEN
+            RETURN ( FALSE )
+        END
     END
+
+    RETURN ( TRUE )
 END
 
-IF (ISPRIME) THEN
+LET N = 7
+IF (CHECKPRIME(N)) THEN
     PRINT N + " IS PRIME"
 ELSE 
     PRINT N + " IS NOT PRIME"
