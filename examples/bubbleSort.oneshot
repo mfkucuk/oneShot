@@ -2,14 +2,14 @@
 LET N = 5
 LET ARRAY[N]
 
-FOR (LET I = 0 : I < N : I = I + 1) THEN
+FOR (LET I = 0 : I < N : I++) THEN
     ARRAY[I] = FLOOR(RANDOM() * 1000)
 END
 
 # Bubble sort
-FOR (LET I = 0 : I < N - 1 : I = I + 1) THEN
+FOR (LET I = 0 : I < N - 1 : I++) THEN
     LET SWAPPED = FALSE
-    FOR (LET J = 0 : J < N - I - 1 : J = J + 1) THEN
+    FOR (LET J = 0 : J < N - I - 1 : J++) THEN
         IF (ARRAY[J] > ARRAY[J + 1]) THEN
             LET TEMP = ARRAY[J]
             ARRAY[J] = ARRAY[J + 1]
@@ -23,6 +23,6 @@ FOR (LET I = 0 : I < N - 1 : I = I + 1) THEN
     END
 END
 
-FOR (LET I = 0 : I < N : I = I + 1) THEN
+FOR (LET I = 0 : I < N : I++) THEN
     PRINT ARRAY[I]
 END

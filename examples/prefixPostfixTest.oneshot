@@ -1,0 +1,23 @@
+# First test
+LET A = 1
+LET B = A++ # B becomes 1, A becomes 2
+LET C = ++A # A becomes 3, C becomes 3
+
+PRINT("A IS " + A)
+PRINT("B IS " + B)
+PRINT("C IS " + C)
+
+# Second test (array iteration)
+LET I = 0
+LET S = 0
+LET ARR[5]
+
+FOR (LET X = 0 : X < 5 : X++) THEN
+    ARR[X] = X * 10
+END
+
+WHILE (I < 5) THEN
+    S = S + ARR[I++]
+END
+
+PRINT("SUM IS " + S)

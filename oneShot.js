@@ -411,6 +411,7 @@ const TokenType = {
     EQUAL: 0, EQUAL_EQUAL: 0,
     GREATER: 0, GREATER_EQUAL: 0,
     LESS: 0, LESS_EQUAL: 0,
+    PLUSPLUS: 0, MINUSMINUS: 0,
 
     // Literal token types
     IDENTIFIER: 0, STRING: 0, NUMBER: 0,
@@ -611,8 +612,14 @@ class Scanner {
             case ']': this.#addToken(TokenType.RIGHT_B); break;
             case ':': this.#addToken(TokenType.COLON); break;
             case ',': this.#addToken(TokenType.COMMA); break;
-            case '-': this.#addToken(TokenType.MINUS); break;
-            case '+': this.#addToken(TokenType.PLUS); break;
+            case '-': 
+                this.#addToken(this.#match('-') ? TokenType.MINUSMINUS : TokenType.MINUS);
+                break;
+
+            case '+': 
+                this.#addToken(this.#match('+') ? TokenType.PLUSPLUS : TokenType.PLUS);
+                break;
+
             case '/': this.#addToken(TokenType.SLASH); break;
             case '*': this.#addToken(TokenType.STAR); break;
             case '%': this.#addToken(TokenType.MOD); break;
@@ -803,7 +810,7 @@ class AssignmentExpression extends Expression {
      * @param {Environment} environment 
      */
     async interpret(environment) {
-        const value = this.value.interpret(environment);
+        const value = await this.value.interpret(environment);
 
         if (this.index) {
             const array = environment.get(this.name); 
@@ -1014,7 +1021,7 @@ class UnaryExpression extends Expression {
 
         switch (this.token.type) {
             case TokenType.MINUS:
-                this.#checkNumber(rightValue);
+                assert(typeof rightValue == 'number', 'Operand must be a number')
                 return -parseFloat(rightValue);
 
             case TokenType.NOT:
@@ -1023,13 +1030,67 @@ class UnaryExpression extends Expression {
 
         return null;
     }
+}
 
-    #checkNumber(value) {
-        if (typeof value == 'number') {
-            return;
+class PrefixExpression extends Expression {
+    /**
+     * @param {Token} operator 
+     * @param {VariableExpression} variable 
+     */
+    constructor(operator, variable) {
+        super();
+        this.operator = operator;
+        this.variable = variable;
+    }
+
+    /**
+     * @param {Environment} environment 
+     */
+    async interpret(environment) {
+        const variableValue = await this.variable.interpret(environment);
+        assert(typeof variableValue == 'number', 'Operand must be a number');
+
+        switch (this.operator.type) {
+            case TokenType.PLUSPLUS:
+                environment.assign(this.variable.name, variableValue + 1);
+                return variableValue + 1;
+                
+            case TokenType.MINUSMINUS:
+                environment.assign(this.variable.name, variableValue - 1);
+                return variableValue - 1;
+         }  
+    }
+}
+
+class PostfixExpression extends Expression {
+    /**
+     * @param {VariableExpression} variable 
+     * @param {Token} operator 
+     */
+    constructor(variable, operator) {
+        super();
+        this.variable = variable;
+        this.operator = operator;
+    }
+
+    /**
+     * @param {Environment} environment 
+     */
+    async interpret(environment) {
+        const variableValue = await this.variable.interpret(environment);
+        assert(typeof variableValue == 'number', 'Operand must be a number');
+
+        switch (this.operator.type) {
+            case TokenType.PLUSPLUS:
+                environment.assign(this.variable.name, variableValue + 1);
+                break;
+
+            case TokenType.MINUSMINUS:
+                environment.assign(this.variable.name, variableValue - 1);
+                break;
         }
 
-        throw new Error(`Operand must be a number`)
+        return variableValue;
     }
 }
 
@@ -2712,7 +2773,28 @@ class Parser {
             return new UnaryExpression(operator, right);
         }
 
-        return this.#call();
+        if (this.#match(TokenType.PLUSPLUS, TokenType.MINUSMINUS)) {
+            const operator = this.#previous();
+            const expression = this.#unary();
+            assert(expression instanceof VariableExpression, 'prefix ++ and -- can only be used on variables');
+            return new PrefixExpression(operator, expression);
+        }
+
+        return this.#postfix();
+    }
+
+    #postfix() {
+        let expression = this.#call();
+
+        if (this.#match(TokenType.PLUSPLUS, TokenType.MINUSMINUS)) {
+            const operator = this.#previous();
+
+            assert(expression instanceof VariableExpression, 'prefix ++ and -- can only be used on variables');
+
+            return new PostfixExpression(expression, operator);
+        }
+
+        return expression;
     }
     
     #call() {
@@ -3123,6 +3205,8 @@ class OneShot {
 
         this.#interpreter = new Interpreter();
         await this.#interpreter.interpret(statements);
+
+        this.stop();
     }
 
     stop() {
