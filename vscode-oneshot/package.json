@@ -4,6 +4,7 @@
     "description": "Highlighting, completion, a game runner and a live sprite & music preview for the OneShot language",
     "version": "0.2.0",
     "publisher": "mfkucuk",
+    "icon": "icons/icon.png",
     "repository": {
         "type": "git",
         "url": "https://github.com/mfkucuk/oneShot"
@@ -24,7 +25,11 @@
                 "id": "oneshot",
                 "aliases": ["OneShot", "oneshot"],
                 "extensions": [".oneshot"],
-                "configuration": "./language-configuration.json"
+                "configuration": "./language-configuration.json",
+                "icon": {
+                    "light": "./icons/oneshot.svg",
+                    "dark": "./icons/oneshot.svg"
+                }
             }
         ],
         "grammars": [

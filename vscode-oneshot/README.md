@@ -30,6 +30,7 @@ The preview evaluates `SPRITE` and `SONG` blocks with the real interpreter, so i
 
 ### Editing
 - Syntax highlighting.
+- A bow-and-arrow icon for `.oneshot` files in the explorer and on editor tabs.
 - `Cmd+/` / `Ctrl+/` toggles `#` comments.
 - `(`, `[` and `"` close automatically.
 - Lines are indented after `THEN`, `ELSE`, `SPRITE`, `FRAME`, `SONG` and `SHEET`, and `END` and `ELSE` are outdented.
