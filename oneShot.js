@@ -1,35 +1,19 @@
 /*
  * OneShot is a sequential programming language used to
  * make games. This file is the interpreter for this language
- * written in pure vanilla JavaScript. 
+ * written in pure vanilla JavaScript.
+ *
+ * How it works:
+ *   source code ─► Scanner (tokens) ─► Parser (syntax tree) ─► tree-walking evaluation
+ *
+ * Every call to `OneShot.run` gets its own `Runtime`, which owns the canvas,
+ * the sprites, the songs and the stop flag of that run.
  */
 
 
-// Global Variables
-/**
- * @type {HTMLCanvasElement}
- */
-let canvas = null;
-
-/**
- * @type {CanvasRenderingContext2D}
- */
-let ctx = null;
-
-/**
- * @type {AudioContext}
- */
-let audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-// TODO: This is horrible, find another way
-let running = false;
-
-// Helper Functions
-function assert(condition, message = 'Assertion failed') {
-    if (!condition) {
-        throw new Error(message);
-    }
-}
+/* ==========================================================================
+ * Helpers
+ * ======================================================================= */
 
 /**
  * Pause execution for [ms] milliseconds
@@ -40,186 +24,383 @@ function sleep(ms) {
 }
 
 /**
- * Returns if a object is truthy or falsy in OneShot
- * @param {any} object 
+ * Only FALSE and NULL are falsy in OneShot. Everything else, including 0 and "", is truthy.
+ * @param {any} value
  * @returns {boolean}
  */
-function isTruthy(object) {
-    if (object == null) {
+function isTruthy(value) {
+    if (value === null || value === undefined) {
         return false;
     }
 
-    if (typeof object == 'boolean') {
-        return object;
+    if (typeof value === 'boolean') {
+        return value;
     }
 
     return true;
 }
 
+/**
+ * Returns true if two axis-aligned rectangles overlap.
+ */
 function aabb(x1, y1, w1, h1, x2, y2, w2, h2) {
     return (
-        x1 < x2 + w2 &&  // Right edge of rect1 is past the left edge of rect2
-        x1 + w1 > x2 &&  // Left edge of rect1 is past the right edge of rect2
-        y1 < y2 + h2 &&  // Bottom edge of rect1 is past the top edge of rect2
-        y1 + h1 > y2     // Top edge of rect1 is past the bottom edge of rect2
+        x1 < x2 + w2 &&  // Left edge of rect1 is left of the right edge of rect2
+        x1 + w1 > x2 &&  // Right edge of rect1 is right of the left edge of rect2
+        y1 < y2 + h2 &&  // Top edge of rect1 is above the bottom edge of rect2
+        y1 + h1 > y2     // Bottom edge of rect1 is below the top edge of rect2
     );
 }
 
-
-// Extension methods
-HTMLCanvasElement.prototype.setup = function() {
-    this.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-    });
+/**
+ * A short, human readable description of a value's type, for error messages.
+ */
+function describe(value) {
+    if (value === null || value === undefined) return 'NULL';
+    if (Array.isArray(value)) return 'an array';
+    if (value instanceof OneShotFunction) return 'a function';
+    return `a ${typeof value}`;
 }
 
-/* OneShot classes */
+/**
+ * @param {any} value
+ * @param {string} what Used in the error message, e.g. "SLEEP"
+ */
+function expectNumber(value, what) {
+    if (typeof value !== 'number') {
+        throw new OneShotError(`${what} expects a number, got ${describe(value)}`);
+    }
 
-// Input
+    return value;
+}
+
+
+/* ==========================================================================
+ * Errors and control-flow signals
+ * ======================================================================= */
+
+/**
+ * An error in a OneShot program. `line` is filled in by the parser, or by
+ * `executeStatements` for errors that happen while the program runs.
+ */
+class OneShotError extends Error {
+    /**
+     * @param {string} message
+     * @param {number} [line]
+     */
+    constructor(message, line) {
+        super(message);
+        this.name = 'OneShotError';
+        this.line = line;
+    }
+}
+
+/**
+ * Thrown by RETURN and caught by the function call. It is not an Error on
+ * purpose: creating Errors captures a stack trace, which makes calls slow.
+ */
+class ReturnSignal {
+    constructor(value) {
+        this.value = value;
+    }
+}
+
+/**
+ * Thrown when a running program is stopped, to unwind it immediately.
+ */
+class StopSignal {}
+
+
+/* ==========================================================================
+ * Input
+ * ======================================================================= */
+
+/** Keys whose default action (scrolling the page) is blocked while a program runs */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ']);
+
 class Input {
     /**
-     * @type {Map<string, boolean>}
+     * Upper-cased `KeyboardEvent.key` values of the keys that are held down.
+     * @type {Set<string>}
      */
-    keyDownMap;
-    
-    constructor() {
-        this.keyDownMap = {};
-
-        this.mouseX = 0;
-        this.mouseY = 0;
-
-        this.onKeyDown = this.onKeyDown.bind(this);
-        this.onKeyUp = this.onKeyUp.bind(this);
-        this.onMouseMove = this.onMouseMove.bind(this);
-        window.addEventListener('keydown', this.onKeyDown);
-        window.addEventListener('keyup', this.onKeyUp);
-        window.addEventListener('mousemove', this.onMouseMove);
-    }
+    #pressedKeys = new Set();
 
     /**
-     * @param {string} key 
+     * Remembers which key a physical key produced, so releasing it after
+     * letting go of SHIFT still releases the right key.
+     * @type {Map<string, string>}
      */
-    getKey(key) {
-        key = key.toLocaleUpperCase();
-        if (typeof this.keyDownMap[key] == 'undefined') {
-            this.keyDownMap[key] = false;
+    #keyByCode = new Map();
+
+    /**
+     * Keys pressed since the last frame, and those of them that were already released.
+     * A quick tap is kept down until the frame ends, so programs that check INPUT once
+     * per frame never miss it.
+     */
+    #pressedThisFrame = new Set();
+    #releasedThisFrame = new Set();
+
+    mouseX = 0;
+    mouseY = 0;
+
+    /**
+     * Canvas that mouse coordinates are relative to
+     * @type {HTMLCanvasElement?}
+     */
+    canvas = null;
+
+    /** True while a program runs, so arrow keys and space don't scroll the page */
+    capturing = false;
+
+    constructor() {
+        if (typeof window === 'undefined') {
+            return;
         }
 
-        return this.keyDownMap[key];
+        window.addEventListener('keydown', event => this.#onKeyDown(event));
+        window.addEventListener('keyup', event => this.#onKeyUp(event));
+        window.addEventListener('blur', () => this.#pressedKeys.clear());
+        window.addEventListener('mousemove', event => this.#onMouseMove(event));
     }
 
     /**
-     * @param {KeyboardEvent} event 
+     * @param {string} key e.g. "W", "ARROWUP", "ESCAPE" or " " for space
      */
-    onKeyDown(event) {
-        this.keyDownMap[event.key.toLocaleUpperCase()] = true;
+    isDown(key) {
+        return this.#pressedKeys.has(String(key).toUpperCase());
     }
 
     /**
-     * @param {KeyboardEvent} event 
+     * Called when the program sleeps, which is where a frame ends.
      */
-    onKeyUp(event) {
-        this.keyDownMap[event.key.toLocaleUpperCase()] = false;
+    endFrame() {
+        for (const key of this.#releasedThisFrame) {
+            this.#pressedKeys.delete(key);
+        }
+
+        this.#pressedThisFrame.clear();
+        this.#releasedThisFrame.clear();
     }
 
     /**
-     * @param {MouseEvent} event 
+     * @param {KeyboardEvent} event
      */
-    onMouseMove(event) {
-        const rect = canvas?.getBoundingClientRect();
-        this.mouseX = event.x - rect?.left;
-        this.mouseY = event.y - rect?.top;
+    #onKeyDown(event) {
+        const key = event.key.toUpperCase();
+        this.#pressedKeys.add(key);
+        this.#pressedThisFrame.add(key);
+        this.#keyByCode.set(event.code, key);
+
+        const target = event.target;
+        const isTyping = target && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+        if (this.capturing && SCROLL_KEYS.has(event.key) && !isTyping) {
+            event.preventDefault();
+        }
+    }
+
+    /**
+     * @param {KeyboardEvent} event
+     */
+    #onKeyUp(event) {
+        for (const key of [event.key.toUpperCase(), this.#keyByCode.get(event.code)]) {
+            if (this.#pressedThisFrame.has(key)) {
+                this.#releasedThisFrame.add(key);
+            } else {
+                this.#pressedKeys.delete(key);
+            }
+        }
+    }
+
+    /**
+     * @param {MouseEvent} event
+     */
+    #onMouseMove(event) {
+        if (!this.canvas) {
+            return;
+        }
+
+        const rect = this.canvas.getBoundingClientRect();
+        this.mouseX = event.clientX - rect.left;
+        this.mouseY = event.clientY - rect.top;
     }
 }
 
-// Rendering
+const input = new Input();
+
+
+/* ==========================================================================
+ * Sprites
+ * ======================================================================= */
+
+/** Every character of PIXELDATA is drawn as a square of this many pixels */
+const SPRITE_PIXEL_SIZE = 4;
+
 class Sprite {
-    
-    sizeX;
-    sizeY;
+    /** Set by SIZE; PIXELDATA is validated against it */
+    width = null;
+    height = null;
+
+    /** @type {Frame[]} */
+    frames = [];
+
+    /** @type {Map<string, Frame>} */
+    framesByName = new Map();
 
     /**
-     * @type {Frame[]}
+     * Frame being defined by the current FRAME block
+     * @type {Frame?}
      */
-    frames;
+    currentFrame = null;
+
+    addFrame(name) {
+        const frame = new Frame();
+        this.frames.push(frame);
+        if (name !== null && name !== undefined) {
+            this.framesByName.set(name, frame);
+        }
+        this.currentFrame = frame;
+        return frame;
+    }
 
     /**
-     * @type {Map<string, Frame>}
+     * @param {number|string} frame Index or name of the frame
      */
-    frameMap;
-    frameIndex;
+    getFrame(frame) {
+        const result = typeof frame === 'number' ? this.frames[frame] : this.framesByName.get(frame);
+        if (!result) {
+            throw new OneShotError(`Sprite has no frame ${JSON.stringify(frame)}`);
+        }
 
-    constructor() {
-        this.frames = [];
-        this.frameMap = new Map();
-        this.frameIndex = -1;
-    }
-
-    get currentFrame() {
-        return this.frames[this.frameIndex];
-    }
-
-    set currentFrame(frame) {
-        this.frames[this.frameIndex] = frame;
-        this.frameMap.set(this.frames[this.frameIndex].frameName, this.frames[this.frameIndex]);
+        return result;
     }
 }
 
 class Frame {
+    /** @type {Map<string, string>} character → CSS color */
+    colors = new Map();
 
-    colorData;
-    pixelData;
+    /** @type {string[]} */
+    rows = [];
 
-    constructor(frameName) {
-        this.colorData = new Map();
-        this.pixelData = [];
+    /** @type {HTMLCanvasElement?} */
+    #image = null;
 
-
-        this.frameName = frameName;
+    setColor(char, color) {
+        this.colors.set(char, color);
+        this.#image = null;
     }
 
+    addRow(row) {
+        this.rows.push(row);
+        this.#image = null;
+    }
+
+    /**
+     * The frame pre-rendered onto its own canvas, so that DRAW
+     * is a single drawImage call instead of one fillRect per pixel.
+     */
+    get image() {
+        this.#image ??= this.#render();
+        return this.#image;
+    }
+
+    #render() {
+        const columns = Math.max(1, ...this.rows.map(row => row.length));
+
+        const image = document.createElement('canvas');
+        image.width = columns * SPRITE_PIXEL_SIZE;
+        image.height = Math.max(1, this.rows.length) * SPRITE_PIXEL_SIZE;
+
+        const context = image.getContext('2d');
+        for (let y = 0; y < this.rows.length; y++) {
+            for (let x = 0; x < this.rows[y].length; x++) {
+                const color = this.colors.get(this.rows[y][x]);
+                if (!color) {
+                    continue;
+                }
+
+                context.fillStyle = color;
+                context.fillRect(x * SPRITE_PIXEL_SIZE, y * SPRITE_PIXEL_SIZE, SPRITE_PIXEL_SIZE, SPRITE_PIXEL_SIZE);
+            }
+        }
+
+        return image;
+    }
 }
 
-// BGM & SFX
-class Song extends GainNode {
-    
-    /**
-     * @param {BaseAudioContext} ctx 
-     */
-    constructor(ctx) {
-        super(ctx);
 
-        this.ctx = ctx;
-        this.sheets = [];
-        this.bpm = 120;
-        this.loop = false;
+/* ==========================================================================
+ * BGM & SFX
+ * ======================================================================= */
+
+/**
+ * @type {AudioContext?}
+ */
+let audioContext = null;
+
+/**
+ * The AudioContext is created lazily, because browsers only allow
+ * audio after the user has interacted with the page.
+ */
+function getAudioContext() {
+    audioContext ??= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
     }
 
-    get currentSheet() {
-        if (this.sheets.length == 0) {
-            return null;
-        }
+    return audioContext;
+}
 
-        return this.sheets[this.sheets.length - 1];
+const WAVE_TYPES = new Set(['sine', 'square', 'sawtooth', 'triangle']);
+
+/** Semitone distance of each note from A in the same octave */
+const NOTE_OFFSETS = { C: -9, D: -7, E: -5, F: -4, G: -2, A: 0, B: 2 };
+
+/** Notes are scheduled on the audio clock this many seconds ahead of time */
+const SCHEDULE_AHEAD = 0.2;
+
+/**
+ * Converts a note such as "A4", "C#5" or "Bb3" into its frequency in Hz.
+ * @param {string} note
+ */
+function noteFrequency(note) {
+    const match = /^([A-G])([#B]?)(\d)$/i.exec(note);
+    if (!match) {
+        throw new OneShotError(`Invalid note '${note}'. Notes look like C4, F#3 or Bb5`);
     }
 
-    /**
-     * 
-     * @param {Sheet} sheet 
-     */
-    addSheet(sheet) {
-        sheet.index = this.sheets.length;
+    const [, letter, accidental, octave] = match;
+    let semitonesFromA4 = NOTE_OFFSETS[letter.toUpperCase()] + (Number(octave) - 4) * 12;
+    if (accidental === '#') {
+        semitonesFromA4++;
+    } else if (accidental) {
+        semitonesFromA4--;
+    }
+
+    return 440 * 2 ** (semitonesFromA4 / 12);
+}
+
+class Song {
+    bpm = 120;
+    loop = false;
+
+    /** @type {Sheet[]} */
+    sheets = [];
+
+    addSheet() {
+        const sheet = new Sheet(this);
         this.sheets.push(sheet);
+        return sheet;
     }
 
-    async play() {
-        const promises = [];
+    play() {
+        const context = getAudioContext();
+        const startTime = context.currentTime + 0.05;
 
+        // Sheets play in the background, all starting at the same time
         for (const sheet of this.sheets) {
-            promises.push(sheet.play());
+            sheet.play(context, startTime);
         }
-
-        await Promise.all(promises);
     }
 
     stop() {
@@ -230,367 +411,224 @@ class Song extends GainNode {
 }
 
 class Sheet {
+    gain = 0.8;
+    type = 'sine';
+
+    /** Note envelope, in milliseconds */
+    attack = 2;
+    release = 20;
 
     /**
-     * @param {Song} song 
+     * A note is { frequency, beats }. Rests have a null frequency.
+     * @type {{ frequency: number?, beats: number }[]}
+     */
+    notes = [];
+
+    /** State of the current playback, replaced on every play */
+    #playback = null;
+
+    /**
+     * @param {Song} song
      */
     constructor(song) {
         this.song = song;
-        this.index = -1;
-        this.bars = '';
-        this.notes = [];
-        this.gain = 0.8;
-        this.type = 'sine';
-        this.attack = 2;
-        this.release = 20;
     }
 
-    build() {
-        const sheetNotes = this.bars.trim()
-            .replaceAll("\r", " ")
-            .replaceAll("\n", " ")
-            .replaceAll("\t", " ")
-            .split(" ");
-
-        for (const sheetNote of sheetNotes) {
-            if (sheetNote == '--') {
-                const previousNote = this.notes[this.notes.length - 1];
-                if (previousNote && previousNote.note == '--') {
-                    previousNote.length++;
-                    continue;
-                }
-
-                const note = new Note();
-                note.sheet = this;
-                this.notes.push(note);
-                continue;
-            } 
-            
-            if (sheetNote == '..') {
-                const previousNote = this.notes[this.notes.length - 1];
-                previousNote.length++;
+    /**
+     * Adds the notes of a BAR. Notes are separated by whitespace:
+     * "C4" is a note, "--" is a rest and ".." holds the previous note one beat longer.
+     * @param {string} bar
+     */
+    addBar(bar) {
+        for (const symbol of String(bar).split(/\s+/)) {
+            if (symbol === '') {
                 continue;
             }
 
-            const note = new Note(sheetNote, this);
-            this.notes.push(note);
+            if (symbol === '..') {
+                const previous = this.notes.at(-1);
+                if (!previous) {
+                    throw new OneShotError(`'..' needs a note before it to hold`);
+                }
+                previous.beats++;
+                continue;
+            }
+
+            const frequency = symbol === '--' ? null : noteFrequency(symbol);
+            this.notes.push({ frequency, beats: 1 });
         }
     }
 
-    async play() {
-        this.build();
+    /**
+     * @param {AudioContext} context
+     * @param {number} startTime
+     */
+    async play(context, startTime) {
+        this.stop();
 
-        const song = this.song;
-        const ctx = song.ctx;
-
-        this.node = ctx.createGain();
-        this.node.gain.value = this.gain;
-        this.node.connect(song);
-
-        let index = 0;
-        this.playing = true;
-
-        while (this.playing) {
-            await this.notes[index++].play();
-            if (index == this.notes.length) {
-                if (song.loop) {
-                    index = 0;
-                    continue;
-                }
-                break;
-            }
+        if (this.notes.length === 0) {
+            return;
         }
 
-        await sleep(5000);
+        const output = context.createGain();
+        output.gain.value = this.gain;
+        output.connect(context.destination);
 
-        this.node.disconnect();
+        const playback = { playing: true, oscillators: new Set() };
+        this.#playback = playback;
+
+        let time = startTime;
+        do {
+            for (const note of this.notes) {
+                if (!playback.playing) {
+                    break;
+                }
+
+                const duration = note.beats * 60 / this.song.bpm;
+                if (note.frequency !== null) {
+                    this.#scheduleTone(context, output, playback, note.frequency, time, duration);
+                }
+                time += duration;
+
+                // Scheduling on the audio clock keeps sheets in sync; only sleep
+                // so we don't schedule more than SCHEDULE_AHEAD seconds ahead.
+                const wait = time - context.currentTime - SCHEDULE_AHEAD;
+                if (wait > 0) {
+                    await sleep(wait * 1000);
+                }
+            }
+        } while (playback.playing && this.song.loop);
+
+        if (playback.playing) {
+            // Let the last notes ring out
+            await sleep((time - context.currentTime) * 1000 + 100);
+        }
+
+        output.disconnect();
     }
 
     stop() {
-        this.playing = false;
-    }
-}
-
-class Note {
-
-    static noteOffsets = {
-        C: -9,
-        D: -7,
-        E: -5,
-        F: -4,
-        G: -2,
-        A: 0,
-        B: 2,
-    };
-    
-    constructor(note, sheet) {
-        this.note = note;
-        this.length = 1;
-
-        this.sheet = sheet;
-    }
-
-    /**
-     * Converts a note (letter-number combination) into its frequency value.
-     * @param {string} note 
-     */
-    #getFrequency(note) {
-        const letter = note[0].toUpperCase();
-        const octave = parseInt(note[1], 10);
-
-        const semitonesFromA4 = Note.noteOffsets[letter] + (octave - 4) * 12;
-
-        const frequency = 440 * Math.pow(2, semitonesFromA4 / 12);
-        return frequency;
-    }
-
-    async play() {
-
-        const sheet = this.sheet;
-        const song = sheet.song;
-
-        const length = this.length * (120 / song.bpm);
-
-        let oscillator = null;
-        let gainNode = null;
-
-        if (this.note) {
-            const ctx = song.ctx;
-            const time = ctx.currentTime;
-            const gain = sheet.gain;
-
-            const attack = Math.min(length / 2, sheet.attack / 1000);
-            const release = Math.min(length / 2, sheet.release / 1000);
-
-            gainNode = ctx.createGain();
-
-            gainNode.gain.setValueAtTime(0, time);
-            gainNode.gain.linearRampToValueAtTime(gain, time + attack);
-
-            gainNode.gain.setValueAtTime(gain, time + length - release);
-            gainNode.gain.linearRampToValueAtTime(0, time + length);
-
-            gainNode.connect(ctx.destination);
-
-            oscillator = ctx.createOscillator();
-            oscillator.type = sheet.type;
-            oscillator.frequency.value = this.#getFrequency(this.note);
-            oscillator.connect(gainNode);
-            oscillator.start();
+        if (!this.#playback) {
+            return;
         }
 
-        await sleep(length * 1100);
-
-        if (oscillator) {
+        this.#playback.playing = false;
+        for (const oscillator of this.#playback.oscillators) {
             oscillator.stop();
-            oscillator.disconnect();
-            oscillator = undefined;
         }
+        this.#playback = null;
+    }
 
-        if (gainNode) {
-            gainNode.disconnect(ctx.destination);
-            gainNode = undefined;
-        }
+    #scheduleTone(context, output, playback, frequency, time, duration) {
+        const attack = Math.min(duration / 2, this.attack / 1000);
+        const release = Math.min(duration / 2, this.release / 1000);
+
+        const envelope = context.createGain();
+        envelope.gain.setValueAtTime(0, time);
+        envelope.gain.linearRampToValueAtTime(1, time + attack);
+        envelope.gain.setValueAtTime(1, time + duration - release);
+        envelope.gain.linearRampToValueAtTime(0, time + duration);
+        envelope.connect(output);
+
+        const oscillator = context.createOscillator();
+        oscillator.type = this.type;
+        oscillator.frequency.value = frequency;
+        oscillator.connect(envelope);
+        oscillator.start(time);
+        oscillator.stop(time + duration);
+
+        playback.oscillators.add(oscillator);
+        oscillator.onended = () => {
+            playback.oscillators.delete(oscillator);
+            oscillator.disconnect();
+            envelope.disconnect();
+        };
     }
 }
 
-const input = new Input();
 
-// Beyond here is interpreter related
+/* ==========================================================================
+ * Tokens
+ * ======================================================================= */
+
 /**
- * All the allowed tokens in OneShot
+ * Reserved words. Keywords are upper case and their token type is the word itself.
  */
-const TokenType = {
-    // Single character token types
-    LEFT_P: 0, RIGHT_P: 0, LEFT_B: 0, RIGHT_B: 0, 
-    COLON: 0, COMMA: 0, MINUS: 0, PLUS: 0, 
-    SLASH: 0, STAR: 0, MOD: 0, HASHTAG: 0,
-    
-    // One or two character token types
-    NOT: 0, NOT_EQUAL: 0,
-    EQUAL: 0, EQUAL_EQUAL: 0,
-    GREATER: 0, GREATER_EQUAL: 0,
-    LESS: 0, LESS_EQUAL: 0,
-    PLUSPLUS: 0, MINUSMINUS: 0,
+const KEYWORDS = new Set([
+    // Keywords
+    'AND', 'OR', 'TRUE', 'FALSE', 'NULL',
+    'IF', 'ELSE', 'FOR', 'WHILE', 'THEN', 'END',
+    'LET', 'FUNC', 'RETURN', 'ALL',
 
-    // Literal token types
-    IDENTIFIER: 0, STRING: 0, NUMBER: 0,
+    // Built-in values and functions
+    'MOUSEX', 'MOUSEY', 'RANDOM', 'INPUT', 'INT', 'MIN', 'MAX', 'ABS',
+    'FLOOR', 'CEIL', 'LERP', 'SQRT', 'SUM', 'COLLIDE',
 
-    // Keyword token types
-    AND: 0, OR: 0, TRUE: 0, FALSE: 0,
-    IF: 0, ELSE: 0, FOR: 0, WHILE: 0, END: 0, THEN: 0,
-    LET: 0, FUN: 0, NULL: 0, ALL: 0, MOUSEX: 0, MOUSEY: 0,
-    FUNC: 0, RETURN: 0,
-
-    // Built-in function token types
-    DEBUG: 0, PRINT: 0, WINDOW: 0, COLOR: 0,
-    FILL: 0, TEXT: 0, SLEEP: 0, DRAW: 0, RANDOM: 0,
-    INPUT: 0, INT: 0, MIN: 0, MAX: 0, ABS: 0,
-    FLOOR: 0, CEIL: 0, LERP: 0, SQRT: 0,
-
-    // Array function token types
-    SUM: 0, NORMALIZE: 0,
-
-    // Physics
-    COLLIDE: 0,
+    // Commands
+    'DEBUG', 'PRINT', 'WINDOW', 'COLOR', 'FILL', 'TEXT', 'SLEEP', 'DRAW',
 
     // Sprite
-    SPRITE: 0, SIZE: 0, FRAME: 0, 
-    COLORDATA: 0, PIXELDATA: 0,
+    'SPRITE', 'SIZE', 'FRAME', 'COLORDATA', 'PIXELDATA',
 
     // BGM & SFX
-    SONG: 0, SHEET: 0, BAR: 0, GAIN: 0,
-    BPM: 0, LOOP: 0, TYPE: 0, PLAY: 0, STOP: 0,
+    'SONG', 'SHEET', 'BAR', 'GAIN', 'BPM', 'LOOP', 'TYPE', 'PLAY', 'STOP',
+]);
 
-    EOF: 0
-};
+/**
+ * All the allowed tokens in OneShot. Each token type is its own name,
+ * which makes tokens easy to read while debugging.
+ */
+const TokenType = Object.freeze(Object.fromEntries([
+    // Single character token types
+    'LEFT_P', 'RIGHT_P', 'LEFT_B', 'RIGHT_B',
+    'COLON', 'COMMA', 'MINUS', 'PLUS', 'SLASH', 'STAR', 'MOD',
 
+    // One or two character token types
+    'NOT', 'NOT_EQUAL', 'EQUAL', 'EQUAL_EQUAL',
+    'GREATER', 'GREATER_EQUAL', 'LESS', 'LESS_EQUAL',
+    'PLUSPLUS', 'MINUSMINUS',
 
-let tokenIndex = 0;
-for (const tokenType of Object.keys(TokenType)) {
-    TokenType[tokenType] = tokenIndex;
-    tokenIndex++;
-}
+    // Literal token types
+    'IDENTIFIER', 'STRING', 'NUMBER',
+
+    ...KEYWORDS,
+
+    'EOF',
+].map(type => [type, type])));
 
 class Token {
-    
-    #type;
-    #lexeme;
-    #literal;
-    #line;
-
+    /**
+     * @param {string} type One of TokenType
+     * @param {string} lexeme The source text of the token
+     * @param {any} literal Value of STRING and NUMBER tokens
+     * @param {number} line
+     */
     constructor(type, lexeme, literal, line) {
-        this.#type = type;
-        this.#lexeme = lexeme;
-        this.#literal = literal;
-        this.#line = line;
-    }
-
-    get type() {
-        return this.#type;
-    }
-
-    get lexeme() {
-        return this.#lexeme;
-    }
-
-    get literal() {
-        return this.#literal;
-    }
-
-    get line() {
-        return this.#line;
+        this.type = type;
+        this.lexeme = lexeme;
+        this.literal = literal;
+        this.line = line;
     }
 }
 
-class Func {
-    /**
-     * @param {FunctionStatement} declaration 
-     */
-    constructor(declaration, arity) {
-        this.declaration = declaration;
-        this.arity = arity;
-    }
 
-    /**
-     * @param {Environment} environment 
-     * @param {*[]} args 
-     */
-    async call(environment, args) {
-        const localEnvironment = new Environment(environment);
-        for (let i = 0; i < this.declaration.params.length; i++) {
-            localEnvironment.define(this.declaration.params[i].lexeme, args[i]);
-        } 
-
-        try {
-            await this.declaration.executeBlock(localEnvironment);
-        } catch (returnValue) {
-            return returnValue.value;
-        }
-        return null;
-    }
-}
-
-class Return extends Error {
-    constructor(value) {
-        super();
-        this.value = value;
-    }
-}
+/* ==========================================================================
+ * Scanner: source code → tokens
+ * ======================================================================= */
 
 class Scanner {
-    
-    static #keywords = new Map([
-        ['AND', TokenType.AND],
-        ['OR', TokenType.OR],
-        ['TRUE', TokenType.TRUE],
-        ['FALSE', TokenType.FALSE],
-        ['IF', TokenType.IF],
-        ['ELSE', TokenType.ELSE],
-        ['FOR', TokenType.FOR],
-        ['WHILE', TokenType.WHILE],
-        ['END', TokenType.END],
-        ['THEN', TokenType.THEN],
-        ['LET', TokenType.LET],
-        ['FUN', TokenType.FUN],
-        ['NULL', TokenType.NULL],
-        ['ALL', TokenType.ALL],
-        ['MOUSEX', TokenType.MOUSEX],
-        ['MOUSEY', TokenType.MOUSEY],
-        ['FUNC', TokenType.FUNC],
-        ['RETURN', TokenType.RETURN],
-        ['DEBUG', TokenType.DEBUG],
-        ['PRINT', TokenType.PRINT],
-        ['WINDOW', TokenType.WINDOW],
-        ['COLOR', TokenType.COLOR],
-        ['FILL', TokenType.FILL],
-        ['TEXT', TokenType.TEXT],
-        ['SLEEP', TokenType.SLEEP],
-        ['UPDATE', TokenType.UPDATE],
-        ['SPRITE', TokenType.SPRITE],
-        ['SIZE', TokenType.SIZE],
-        ['DRAW', TokenType.DRAW],
-        ['RANDOM', TokenType.RANDOM],
-        ['INPUT', TokenType.INPUT],
-        ['INT', TokenType.INT],
-        ['MIN', TokenType.MIN],
-        ['MAX', TokenType.MAX],
-        ['ABS', TokenType.ABS],
-        ['FLOOR', TokenType.FLOOR],
-        ['CEIL', TokenType.CEIL],
-        ['LERP', TokenType.LERP],
-        ['SQRT', TokenType.SQRT],
-        ['SUM', TokenType.SUM],
-        ['COLLIDE', TokenType.COLLIDE],
-        ['FRAME', TokenType.FRAME],
-        ['COLORDATA', TokenType.COLORDATA],
-        ['PIXELDATA', TokenType.PIXELDATA],
-        ['SONG', TokenType.SONG],
-        ['SHEET', TokenType.SHEET],
-        ['BAR', TokenType.BAR],
-        ['GAIN', TokenType.GAIN],
-        ['BPM', TokenType.BPM],
-        ['LOOP', TokenType.LOOP],
-        ['TYPE', TokenType.TYPE],
-        ['PLAY', TokenType.PLAY],
-        ['STOP', TokenType.STOP],
-    ]);
 
     #source;
-    #tokens;
-    #start;
-    #current;
-    #line;
+    #tokens = [];
+    #start = 0;
+    #current = 0;
+    #line = 1;
 
     /**
-     * @param {string} source 
+     * @param {string} source
      */
     constructor(source) {
         this.#source = source;
-        this.#tokens = [];
-        this.#start = 0;
-        this.#current = 0;
-        this.#line = 1;
     }
 
     scanTokens() {
@@ -612,40 +650,28 @@ class Scanner {
             case ']': this.#addToken(TokenType.RIGHT_B); break;
             case ':': this.#addToken(TokenType.COLON); break;
             case ',': this.#addToken(TokenType.COMMA); break;
-            case '-': 
-                this.#addToken(this.#match('-') ? TokenType.MINUSMINUS : TokenType.MINUS);
-                break;
-
-            case '+': 
-                this.#addToken(this.#match('+') ? TokenType.PLUSPLUS : TokenType.PLUS);
-                break;
-
             case '/': this.#addToken(TokenType.SLASH); break;
             case '*': this.#addToken(TokenType.STAR); break;
             case '%': this.#addToken(TokenType.MOD); break;
             case '!': this.#addToken(TokenType.NOT); break;
-            case '=': 
-                this.#addToken(this.#match('=') ? TokenType.EQUAL_EQUAL : TokenType.EQUAL);
-                break;
-            
-            case '>':
-                this.#addToken(this.#match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER);
-                break;
+            case '-': this.#addToken(this.#match('-') ? TokenType.MINUSMINUS : TokenType.MINUS); break;
+            case '+': this.#addToken(this.#match('+') ? TokenType.PLUSPLUS : TokenType.PLUS); break;
+            case '=': this.#addToken(this.#match('=') ? TokenType.EQUAL_EQUAL : TokenType.EQUAL); break;
+            case '>': this.#addToken(this.#match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER); break;
 
             case '<':
                 if (this.#match('=')) {
                     this.#addToken(TokenType.LESS_EQUAL);
-                    return;
                 } else if (this.#match('>')) {
                     this.#addToken(TokenType.NOT_EQUAL);
-                    return;
+                } else {
+                    this.#addToken(TokenType.LESS);
                 }
-
-                this.#addToken(TokenType.LESS);
                 break;
 
+            // Comments run until the end of the line
             case '#':
-                while (this.#peek() != '\n' && !this.#isAtEnd()) {
+                while (this.#peek() !== '\n' && !this.#isAtEnd()) {
                     this.#advance();
                 }
                 break;
@@ -659,19 +685,18 @@ class Scanner {
                 this.#line++;
                 break;
 
-            case '"': this.#string(); break;            
-            
+            case '"': this.#string(); break;
+
             default:
                 if (this.#isDigit(c)) {
                     this.#number();
                 } else if (this.#isAlpha(c)) {
                     this.#identifier();
-                } 
-                else {
-                    throw new SyntaxError(`[Line ${this.#line}]: Unexpected character.`);
+                } else {
+                    throw new OneShotError(`Unexpected character '${c}'`, this.#line);
                 }
                 break;
-        } 
+        }
     }
 
     #isAtEnd() {
@@ -682,17 +707,13 @@ class Scanner {
         return this.#source.charAt(this.#current++);
     }
 
-    #addToken(type, literal) {
+    #addToken(type, literal = null) {
         const text = this.#source.substring(this.#start, this.#current);
         this.#tokens.push(new Token(type, text, literal, this.#line));
     }
 
     #match(expectedChar) {
-        if (this.#isAtEnd()) {
-            return false;
-        }
-
-        if (this.#source.charAt(this.#current) != expectedChar) {
+        if (this.#peek() !== expectedChar) {
             return false;
         }
 
@@ -701,31 +722,27 @@ class Scanner {
     }
 
     #peek() {
-        if (this.#isAtEnd()) {
-            return '\0';
-        }
-
-        return this.#source.charAt(this.#current);
+        return this.#isAtEnd() ? '\0' : this.#source.charAt(this.#current);
     }
 
     #peekNext() {
-        if (this.#current + 1 > this.#source.length) {
-            return '\0';
-        }
-
-        return this.#source.charAt(this.#current + 1);
+        return this.#current + 1 >= this.#source.length ? '\0' : this.#source.charAt(this.#current + 1);
     }
 
     #string() {
-        while (this.#peek() != '"' && !this.#isAtEnd()) {
+        const startLine = this.#line;
+        while (this.#peek() !== '"' && !this.#isAtEnd()) {
+            if (this.#peek() === '\n') {
+                this.#line++;
+            }
             this.#advance();
         }
 
         if (this.#isAtEnd()) {
-            throw new SyntaxError(`[Line ${this.#line}]: Unterminated string`);
+            throw new OneShotError('Unterminated string', startLine);
         }
 
-        this.#advance();
+        this.#advance(); // The closing "
 
         const value = this.#source.substring(this.#start + 1, this.#current - 1);
         this.#addToken(TokenType.STRING, value);
@@ -736,7 +753,7 @@ class Scanner {
             this.#advance();
         }
 
-        if (this.#peek() == '.' && this.#isDigit(this.#peekNext())) {
+        if (this.#peek() === '.' && this.#isDigit(this.#peekNext())) {
             this.#advance();
 
             while (this.#isDigit(this.#peek())) {
@@ -749,16 +766,12 @@ class Scanner {
     }
 
     #identifier() {
-        while (this.#isAlphaNumberic(this.#peek())) {
+        while (this.#isAlphaNumeric(this.#peek())) {
             this.#advance();
         }
 
         const text = this.#source.substring(this.#start, this.#current);
-        let type = Scanner.#keywords.get(text);
-        if (!type) {
-            type = TokenType.IDENTIFIER;
-        }
-        this.#addToken(type);
+        this.#addToken(KEYWORDS.has(text) ? text : TokenType.IDENTIFIER);
     }
 
     #isDigit(c) {
@@ -768,160 +781,512 @@ class Scanner {
     #isAlpha(c) {
         return (c >= 'a' && c <= 'z') ||
                (c >= 'A' && c <= 'Z') ||
-               c == '_';
+               c === '_';
     }
 
-    #isAlphaNumberic(c) {
+    #isAlphaNumeric(c) {
         return this.#isAlpha(c) || this.#isDigit(c);
     }
 }
 
-////////////////////////////
-//////// EXPRESSION ////////
-////////////////////////////
-class Expression {
+
+/* ==========================================================================
+ * Runtime
+ * ======================================================================= */
+
+/** Loops give the browser a chance to handle input and repaint at least this often */
+const MAX_BUSY_MS = 30;
+
+const TEXT_FONT = '20px dejavu, monospace';
+
+/**
+ * Everything that belongs to a single run of a program.
+ */
+class Runtime {
+    stopped = false;
+
+    /** @type {HTMLCanvasElement?} */
+    canvas;
+
+    /** @type {CanvasRenderingContext2D?} */
+    ctx;
+
+    /** @type {Map<any, Sprite>} */
+    sprites = new Map();
+    /** @type {Sprite?} Sprite being defined by the current SPRITE block */
+    currentSprite = null;
+
+    /** @type {Map<any, Song>} */
+    songs = new Map();
+    /** @type {Song?} Song being defined by the current SONG block */
+    currentSong = null;
+    /** @type {Sheet?} Sheet being defined by the current SHEET block */
+    currentSheet = null;
+
+    #lastYield = performance.now();
+
     /**
-     * @param {Environment} expression 
+     * @param {HTMLCanvasElement?} canvas
+     * @param {(message: any) => void} onPrint
      */
-    async interpret(environment) {}
-    resolve() {}
-    analyse() {}
-}
-
-class AssignmentExpression extends Expression {
-    
-    name;
-    value;
-
-    /**
-     * @param {Token} name 
-     * @param {Expression} value 
-     * @param {Expression?} index
-     */
-    constructor(name, value, index) {
-        super();
-
-        this.name = name;
-        this.value = value;
-        this.index = index;
+    constructor(canvas, onPrint) {
+        this.canvas = canvas;
+        this.ctx = canvas?.getContext('2d') ?? null;
+        this.onPrint = onPrint;
+        this.globals = new Environment(null, this);
     }
 
     /**
-     * @param {Environment} environment 
+     * The 2D context to draw on
      */
-    async interpret(environment) {
-        const value = await this.value.interpret(environment);
-
-        if (this.index) {
-            const array = environment.get(this.name); 
-            const index = await this.index.interpret(environment);
-            assert(index >= 0 && index < array.length, 'Index out of bounds');
-            array[index] = value;
-        } else {
-            environment.assign(this.name, value);
+    get graphics() {
+        if (!this.ctx) {
+            throw new OneShotError('There is no window to draw on. Open one with WINDOW width, height');
         }
+
+        return this.ctx;
+    }
+
+    openWindow(width, height) {
+        if (!this.canvas) {
+            this.canvas = document.createElement('canvas');
+            document.body.appendChild(this.canvas);
+        }
+
+        if (!this.canvas.oneShotSetup) {
+            this.canvas.addEventListener('contextmenu', event => event.preventDefault());
+            this.canvas.oneShotSetup = true;
+        }
+
+        this.ctx = this.canvas.getContext('2d');
+        this.canvas.width = expectNumber(width, 'WINDOW');
+        this.canvas.height = expectNumber(height, 'WINDOW');
+        input.canvas = this.canvas;
+    }
+
+    /**
+     * @param {string} command Used in the error message
+     */
+    requireSprite(command) {
+        if (!this.currentSprite) {
+            throw new OneShotError(`${command} can only be used inside a SPRITE block`);
+        }
+
+        return this.currentSprite;
+    }
+
+    requireFrame(command) {
+        const frame = this.requireSprite(command).currentFrame;
+        if (!frame) {
+            throw new OneShotError(`${command} can only be used inside a FRAME block`);
+        }
+
+        return frame;
+    }
+
+    requireSong(command) {
+        if (!this.currentSong) {
+            throw new OneShotError(`${command} can only be used inside a SONG block`);
+        }
+
+        return this.currentSong;
+    }
+
+    requireSheet(command) {
+        if (!this.currentSheet) {
+            throw new OneShotError(`${command} can only be used inside a SHEET block`);
+        }
+
+        return this.currentSheet;
+    }
+
+    getSong(name) {
+        const song = this.songs.get(name);
+        if (!song) {
+            throw new OneShotError(`Undefined song: ${name}`);
+        }
+
+        return song;
+    }
+
+    stop() {
+        this.stopped = true;
+
+        for (const song of this.songs.values()) {
+            song.stop();
+        }
+    }
+
+    async sleep(ms) {
+        input.endFrame();
+        await sleep(ms);
+        this.#lastYield = performance.now();
+
+        if (this.stopped) {
+            throw new StopSignal();
+        }
+    }
+
+    /**
+     * Called on every loop iteration. Stops the program if it was stopped and
+     * keeps the page responsive in loops that never SLEEP.
+     */
+    async loopTick() {
+        if (this.stopped) {
+            throw new StopSignal();
+        }
+
+        if (performance.now() - this.#lastYield > MAX_BUSY_MS) {
+            await this.sleep(0);
+        }
+    }
+}
+
+class Environment {
+
+    /** @type {Map<string, any>} */
+    #values = new Map();
+
+    /**
+     * @param {Environment?} enclosing
+     * @param {Runtime} [runtime]
+     */
+    constructor(enclosing, runtime = enclosing.runtime) {
+        this.enclosing = enclosing;
+        this.runtime = runtime;
+    }
+
+    define(name, value) {
+        // Values are never stored as undefined, so `get` needs only one lookup per scope
+        this.#values.set(name, value ?? null);
+    }
+
+    /**
+     * @param {string} name
+     */
+    get(name) {
+        for (let environment = this; environment; environment = environment.enclosing) {
+            const value = environment.#values.get(name);
+            if (value !== undefined) {
+                return value;
+            }
+        }
+
+        throw new OneShotError(`Undefined variable: ${name}`);
+    }
+
+    /**
+     * @param {string} name
+     * @param {*} value
+     */
+    assign(name, value) {
+        for (let environment = this; environment; environment = environment.enclosing) {
+            if (environment.#values.has(name)) {
+                environment.#values.set(name, value ?? null);
+                return;
+            }
+        }
+
+        throw new OneShotError(`Undefined variable: ${name}. Declare it first with LET ${name}`);
+    }
+}
+
+/**
+ * Runs statements one after another. If one of them fails, the error
+ * is tagged with the line of the innermost statement that failed.
+ * @param {Statement[]} statements
+ * @param {Environment} environment
+ */
+async function executeStatements(statements, environment) {
+    for (const statement of statements) {
+        try {
+            await statement.execute(environment);
+        } catch (error) {
+            if (error instanceof Error && error.line === undefined) {
+                error.line = statement.line;
+            }
+            throw error;
+        }
+    }
+}
+
+class OneShotFunction {
+    /**
+     * @param {FunctionStatement} declaration
+     * @param {Environment} closure The environment the function was declared in
+     */
+    constructor(declaration, closure) {
+        this.declaration = declaration;
+        this.closure = closure;
+    }
+
+    get name() {
+        return this.declaration.name.lexeme;
+    }
+
+    get arity() {
+        return this.declaration.params.length;
+    }
+
+    /**
+     * @param {any[]} args
+     */
+    async call(args) {
+        const environment = new Environment(this.closure);
+        const params = this.declaration.params;
+        for (let i = 0; i < params.length; i++) {
+            environment.define(params[i].lexeme, args[i]);
+        }
+
+        try {
+            await executeStatements(this.declaration.body, environment);
+        } catch (signal) {
+            if (signal instanceof ReturnSignal) {
+                return signal.value;
+            }
+            throw signal;
+        }
+
         return null;
+    }
+}
+
+
+/* ==========================================================================
+ * Expressions
+ * ======================================================================= */
+
+/*
+ * Expressions are evaluated with `await expression.evaluate(environment)`.
+ * Leaf expressions (literals and plain variables) return their value directly
+ * instead of a Promise, which skips creating a Promise for the most common nodes.
+ */
+class Expression {
+    /**
+     * @param {Environment} environment
+     * @returns {any | Promise<any>}
+     */
+    evaluate(environment) {}
+}
+
+class LiteralExpression extends Expression {
+    constructor(value) {
+        super();
+        this.value = value;
+    }
+
+    evaluate(environment) {
+        return this.value;
+    }
+}
+
+class VariableExpression extends Expression {
+    /**
+     * @param {Token} name
+     * @param {Expression?} index Set for array accesses like ARRAY[I]
+     */
+    constructor(name, index = null) {
+        super();
+        this.name = name;
+        this.index = index;
+    }
+
+    evaluate(environment) {
+        const value = environment.get(this.name.lexeme);
+        if (!this.index) {
+            return value;
+        }
+
+        return this.#element(value, environment);
+    }
+
+    async #element(array, environment) {
+        return array[await this.checkedIndex(array, environment)];
+    }
+
+    /**
+     * Evaluates the index and checks that it is valid for [array]
+     * @param {any} array
+     * @param {Environment} environment
+     */
+    async checkedIndex(array, environment) {
+        const name = this.name.lexeme;
+        if (!Array.isArray(array)) {
+            throw new OneShotError(`${name} is not an array, it is ${describe(array)}`);
+        }
+
+        const index = await this.index.evaluate(environment);
+        if (!Number.isInteger(index) || index < 0 || index >= array.length) {
+            throw new OneShotError(`Index ${index} is out of bounds for ${name} (length ${array.length})`);
+        }
+
+        return index;
+    }
+}
+
+class AssignmentExpression extends Expression {
+    /**
+     * @param {VariableExpression} target
+     * @param {Expression} value
+     */
+    constructor(target, value) {
+        super();
+        this.target = target;
+        this.value = value;
+    }
+
+    async evaluate(environment) {
+        const name = this.target.name.lexeme;
+
+        if (this.target.index) {
+            const array = environment.get(name);
+            const index = await this.target.checkedIndex(array, environment);
+            return array[index] = await this.value.evaluate(environment);
+        }
+
+        const value = await this.value.evaluate(environment);
+        environment.assign(name, value);
+        return value;
+    }
+}
+
+/**
+ * ++ and --, both prefix (++X) and postfix (X++). Works on variables and array elements.
+ */
+class UpdateExpression extends Expression {
+    /**
+     * @param {VariableExpression} target
+     * @param {Token} operator
+     * @param {boolean} isPrefix
+     */
+    constructor(target, operator, isPrefix) {
+        super();
+        this.target = target;
+        this.delta = operator.type === TokenType.PLUSPLUS ? 1 : -1;
+        this.isPrefix = isPrefix;
+    }
+
+    async evaluate(environment) {
+        const name = this.target.name.lexeme;
+        let oldValue;
+
+        if (this.target.index) {
+            const array = environment.get(name);
+            const index = await this.target.checkedIndex(array, environment);
+            oldValue = expectNumber(array[index], '++ and --');
+            array[index] = oldValue + this.delta;
+        } else {
+            oldValue = expectNumber(environment.get(name), '++ and --');
+            environment.assign(name, oldValue + this.delta);
+        }
+
+        return this.isPrefix ? oldValue + this.delta : oldValue;
     }
 }
 
 class BinaryExpression extends Expression {
     /**
-     * @param {Expression} left 
-     * @param {Token} operator 
-     * @param {Expression} right 
+     * @param {Expression} left
+     * @param {Token} operator
+     * @param {Expression} right
      */
     constructor(left, operator, right) {
         super();
-
         this.left = left;
         this.operator = operator;
         this.right = right;
     }
 
-    async interpret(environment) {
-        const leftValue = await this.left.interpret(environment);
-        const rightValue = await this.right.interpret(environment);
+    async evaluate(environment) {
+        const left = await this.left.evaluate(environment);
+        const right = await this.right.evaluate(environment);
+        const type = this.operator.type;
 
-        switch (this.operator.type) {
-            case TokenType.MINUS:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) - parseFloat(rightValue);
-            case TokenType.SLASH:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) / parseFloat(rightValue);
-            case TokenType.STAR:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) * parseFloat(rightValue);
+        switch (type) {
+            case TokenType.EQUAL_EQUAL: return left === right;
+            case TokenType.NOT_EQUAL: return left !== right;
 
             case TokenType.PLUS:
-                if (typeof leftValue == 'number' && typeof rightValue == 'number') {
-                    return parseFloat(leftValue) + parseFloat(rightValue);
+                if (typeof left === 'number' && typeof right === 'number') {
+                    return left + right;
                 }
-
-                if (typeof leftValue == 'string' && typeof rightValue == 'string') {
-                    return leftValue + rightValue;
+                if (typeof left === 'string' || typeof right === 'string') {
+                    return `${left}${right}`;
                 }
-
-                if (typeof leftValue == 'string' && typeof rightValue == 'number') {
-                    return leftValue + `${rightValue}`;
-                }
-
-                if (typeof leftValue == 'number' && typeof rightValue == 'string') {
-                    return `${leftValue}` + rightValue;
-                }
-
-                break;
-
-            case TokenType.MOD:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) % parseFloat(rightValue);
-
-            case TokenType.GREATER:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) > parseFloat(rightValue);
-            case TokenType.GREATER_EQUAL:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) >= parseFloat(rightValue);
-            case TokenType.LESS:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) < parseFloat(rightValue);
-            case TokenType.LESS_EQUAL:
-                this.#checkNumberOperands(leftValue, rightValue);
-                return parseFloat(leftValue) <= parseFloat(rightValue);
-
-            case TokenType.EQUAL_EQUAL: return this.#isEqual(leftValue, rightValue);
-            case TokenType.NOT_EQUAL: return !this.#isEqual(leftValue, rightValue);
+                throw new OneShotError(`+ needs two numbers or a string, got ${describe(left)} and ${describe(right)}`);
         }
 
-        return null;
+        if (typeof left !== 'number' || typeof right !== 'number') {
+            throw new OneShotError(`${this.operator.lexeme} needs two numbers, got ${describe(left)} and ${describe(right)}`);
+        }
+
+        switch (type) {
+            case TokenType.MINUS: return left - right;
+            case TokenType.STAR: return left * right;
+            case TokenType.SLASH: return left / right;
+            case TokenType.MOD: return left % right;
+            case TokenType.GREATER: return left > right;
+            case TokenType.GREATER_EQUAL: return left >= right;
+            case TokenType.LESS: return left < right;
+            case TokenType.LESS_EQUAL: return left <= right;
+        }
+    }
+}
+
+/**
+ * AND and OR. They short-circuit: the right side is only evaluated when needed.
+ */
+class LogicalExpression extends Expression {
+    /**
+     * @param {Expression} left
+     * @param {Token} operator
+     * @param {Expression} right
+     */
+    constructor(left, operator, right) {
+        super();
+        this.left = left;
+        this.isOr = operator.type === TokenType.OR;
+        this.right = right;
     }
 
-    #isEqual(a, b) {
-        if (a == null && b == null) {
-            return true;
+    async evaluate(environment) {
+        const left = await this.left.evaluate(environment);
+
+        if (isTruthy(left) === this.isOr) {
+            return left;
         }
 
-        if (a == null) {
-            return false;
-        }
+        return await this.right.evaluate(environment);
+    }
+}
 
-        return a === b;
+class UnaryExpression extends Expression {
+    /**
+     * @param {Token} operator
+     * @param {Expression} right
+     */
+    constructor(operator, right) {
+        super();
+        this.operator = operator;
+        this.right = right;
     }
 
-    #checkNumberOperands(left, right) {
-        if (typeof left == 'number' && typeof right == 'number') {
-            return;
+    async evaluate(environment) {
+        const right = await this.right.evaluate(environment);
+
+        if (this.operator.type === TokenType.NOT) {
+            return !isTruthy(right);
         }
 
-        throw new Error('Operands must be numbers');
+        return -expectNumber(right, 'Negation');
     }
 }
 
 class CallExpression extends Expression {
     /**
-     * @param {Expression} callee 
-     * @param {Token} paren 
-     * @param {Expression[]} args 
+     * @param {Expression} callee
+     * @param {Token} paren
+     * @param {Expression[]} args
      */
     constructor(callee, paren, args) {
         super();
@@ -930,1284 +1295,515 @@ class CallExpression extends Expression {
         this.args = args;
     }
 
-    async interpret(environment) {
-        const callee = await this.callee.interpret(environment);
-    
-        assert(callee.arity == this.args.length, 'Incorrect number of arguments');
-    
+    async evaluate(environment) {
+        const callee = await this.callee.evaluate(environment);
+
+        if (!(callee instanceof OneShotFunction)) {
+            throw new OneShotError(`Only functions can be called, but this is ${describe(callee)}`);
+        }
+
+        if (callee.arity !== this.args.length) {
+            throw new OneShotError(`${callee.name} expects ${callee.arity} argument(s) but got ${this.args.length}`);
+        }
+
         const args = [];
         for (const arg of this.args) {
-            args.push(await arg.interpret(environment));
-        }
-    
-        return await callee.call(environment, args);
-    }    
-}
-
-class GroupingExpression extends Expression {
-    /**
-     * @param {Expression} expr 
-     */
-    constructor(expr) {
-        super();
-        
-        this.expr = expr;
-    }
-
-    async interpret(environment) {
-        return await this.expr.interpret(environment);
-    }
-}
-
-class LiteralExpression extends Expression { 
-    constructor(value) {
-        super();
-
-        this.value = value;
-    }
-
-    async interpret(environment) {
-        return this.value;
-    }
-}
-
-class LogicalExpression extends Expression {
-    /**
-     * 
-     * @param {Expression} left 
-     * @param {Token} operator 
-     * @param {Expression} right 
-     */
-    constructor(left, operator, right) {
-        super();
-
-        this.left = left;
-        this.operator = operator;
-        this.right = right;
-    }
-
-    async interpret(environment) {
-        const leftValue = await this.left.interpret(environment);
-
-        if (this.operator.type == TokenType.OR) {
-            if (isTruthy(leftValue)) {
-                return leftValue;
-            }
-        } else {
-            if (!isTruthy(leftValue)) {
-                return leftValue;
-            }
+            args.push(await arg.evaluate(environment));
         }
 
-        return await this.right.interpret(environment);
+        return await callee.call(args);
     }
 }
 
-class UnaryExpression extends Expression {
-    /**
-     * 
-     * @param {Token} token 
-     * @param {Expression} right 
-     */
-    constructor(token, right) {
-        super();
-
-        this.token = token;
-        this.right = right;
-    }
-
-    async interpret(environment) {
-        const rightValue = await this.right.interpret(environment);
-
-        switch (this.token.type) {
-            case TokenType.MINUS:
-                assert(typeof rightValue == 'number', 'Operand must be a number')
-                return -parseFloat(rightValue);
-
-            case TokenType.NOT:
-                return !isTruthy(rightValue);
+/**
+ * Built-in functions, keyed by their keyword. Functions marked
+ * `numeric` check that all their arguments are numbers.
+ */
+const BUILTINS = new Map([
+    ['RANDOM',  { arity: 0, call: () => Math.random() }],
+    ['INPUT',   { arity: 1, call: key => input.isDown(key) }],
+    ['INT',     { arity: 1, call: value => Math.trunc(Number(value)) }],
+    ['MIN',     { arity: 2, numeric: true, call: Math.min }],
+    ['MAX',     { arity: 2, numeric: true, call: Math.max }],
+    ['ABS',     { arity: 1, numeric: true, call: Math.abs }],
+    ['FLOOR',   { arity: 1, numeric: true, call: Math.floor }],
+    ['CEIL',    { arity: 1, numeric: true, call: Math.ceil }],
+    ['SQRT',    { arity: 1, numeric: true, call: Math.sqrt }],
+    ['LERP',    { arity: 3, numeric: true, call: (a, b, t) => a + (b - a) * t }],
+    ['COLLIDE', { arity: 8, numeric: true, call: aabb }],
+    ['SUM',     { arity: 1, call: array => {
+        if (!Array.isArray(array)) {
+            throw new OneShotError(`SUM expects an array, got ${describe(array)}`);
         }
 
-        return null;
-    }
-}
-
-class PrefixExpression extends Expression {
-    /**
-     * @param {Token} operator 
-     * @param {VariableExpression} variable 
-     */
-    constructor(operator, variable) {
-        super();
-        this.operator = operator;
-        this.variable = variable;
-    }
-
-    /**
-     * @param {Environment} environment 
-     */
-    async interpret(environment) {
-        const variableValue = await this.variable.interpret(environment);
-        assert(typeof variableValue == 'number', 'Operand must be a number');
-
-        switch (this.operator.type) {
-            case TokenType.PLUSPLUS:
-                environment.assign(this.variable.name, variableValue + 1);
-                return variableValue + 1;
-                
-            case TokenType.MINUSMINUS:
-                environment.assign(this.variable.name, variableValue - 1);
-                return variableValue - 1;
-         }  
-    }
-}
-
-class PostfixExpression extends Expression {
-    /**
-     * @param {VariableExpression} variable 
-     * @param {Token} operator 
-     */
-    constructor(variable, operator) {
-        super();
-        this.variable = variable;
-        this.operator = operator;
-    }
-
-    /**
-     * @param {Environment} environment 
-     */
-    async interpret(environment) {
-        const variableValue = await this.variable.interpret(environment);
-        assert(typeof variableValue == 'number', 'Operand must be a number');
-
-        switch (this.operator.type) {
-            case TokenType.PLUSPLUS:
-                environment.assign(this.variable.name, variableValue + 1);
-                break;
-
-            case TokenType.MINUSMINUS:
-                environment.assign(this.variable.name, variableValue - 1);
-                break;
-        }
-
-        return variableValue;
-    }
-}
-
-class VariableExpression extends Expression {
-    /**
-     * @param {Token} name 
-     * @param {Expression?} index 
-     */
-    constructor(name, index) {
-        super();
-
-        this.name = name;
-        this.index = index;
-    }
-
-    async interpret(environment) {
-        if (this.index) {
-            const array = environment.get(this.name);
-            const index = await this.index.interpret(environment);
-            assert(index >= 0 && index < array.length, 'Index out of bounds');
-            return array[index];
-        }
-        return environment.get(this.name)
-    }
-}
-
-class RandomExpression extends Expression {
-
-    async interpret(environment) {
-        return Math.random();
-    }
-}
-
-class InputExpression extends Expression {
-    /**
-     * @param {Expression} key 
-     */
-    constructor(key) {
-        super();
-
-        this.key = key;
-    }
-
-    async interpret(environment) {
-        return input.getKey(await this.key.interpret(environment));
-    }
-}
-
-class IntExpression extends Expression {
-    /**
-     * @param {Expression} number 
-     */
-    constructor(number) {
-        super();
-
-        this.number = number;
-    }
-
-    async interpret(environment) {
-        return Number(await this.number.interpret(environment));
-    }
-}
-
-class MinExpression extends Expression {
-    /**
-     * @param {Expression} value1 
-     * @param {Expression} value2 
-     */
-    constructor(value1, value2) {
-        super();
-
-        this.value1 = value1;
-        this.value2 = value2;
-    }
-
-    async interpret(environment) {
-        return Math.min(await this.value1.interpret(environment), await this.value2.interpret(environment));
-    }
-}
-
-class MaxExpression extends Expression {
-    /**
-     * @param {Expression} value1 
-     * @param {Expression} value2 
-     */
-    constructor(value1, value2) {
-        super();
-
-        this.value1 = value1;
-        this.value2 = value2;
-    }
-
-    async interpret(environment) {
-        return Math.max(await this.value1.interpret(environment), await this.value2.interpret(environment));
-    }
-}
-
-class AbsoluteExpression extends Expression {
-    /**
-     * @param {Expression} number 
-     */
-    constructor(number) {
-        super();
-
-        this.number = number;
-    }
-
-    async interpret(environment) {
-        return Math.abs(await this.number.interpret(environment));
-    }
-}
-
-class FloorExpression extends Expression {
-    /**
-     * @param {Expression} number 
-     */
-    constructor(number) {
-        super();
-
-        this.number = number;
-    }
-
-    async interpret(environment) {
-        return Math.floor(await this.number.interpret(environment));
-    }
-}
-
-class CeilExpression extends Expression {
-    /**
-     * @param {Expression} number 
-     */
-    constructor(number) {
-        super();
-
-        this.number = number;
-    }
-
-    async interpret(environment) {
-        return Math.ceil(await this.number.interpret(environment));
-    }
-}
-
-class LerpExpression extends Expression {
-    /**
-     * @param {Expression} a 
-     * @param {Expression} b 
-     * @param {Expression} t 
-     */
-    constructor(a, b, t) {
-        super();
-
-        this.a = a;
-        this.b = b;
-        this.t = t;
-    }
-
-    async interpret(environment) {
-        return (1 - await this.t.interpret(environment)) * await this.a.interpret(environment) 
-            + await this.t.interpret(environment) * await this.b.interpret(environment);
-    }
-}
-
-class MouseXExpression extends Expression {
-    async interpret(environment) {
-        return input.mouseX;
-    }
-}
-
-class MouseYExpression extends Expression {
-    async interpret(environment) {
-        return input.mouseY;
-    }
-}
-
-class SqrtExpression extends Expression {
-    /**
-     * @param {Expression} number 
-     */
-    constructor(number) {
-        super();
-        this.number = number;
-    }
-
-    async interpret(environment) {
-        return Math.sqrt(await this.number.interpret(environment));
-    }
-}
-
-class SumExpression extends Expression {
-    /**
-     * @param {Expression} name 
-     */
-    constructor(name) {
-        super();
-
-        this.name = name;
-    }
-
-    async interpret(environment) {
-        const array = await this.name.interpret(environment);
-        assert(array instanceof Array, 'SUM can only be used with arrays');
         let sum = 0;
-        for (let i = 0; i < array.length; i++) {
-            sum += array[i];
+        for (const value of array) {
+            sum += value;
         }
-
         return sum;
-    }
-}
+    } }],
+]);
 
-class CollideExpression extends Expression {
+/**
+ * Built-in values that are used without parentheses
+ */
+const BUILTIN_VALUES = new Map([
+    ['MOUSEX', { arity: 0, call: () => input.mouseX }],
+    ['MOUSEY', { arity: 0, call: () => input.mouseY }],
+]);
+
+class BuiltinCallExpression extends Expression {
     /**
-     * 
-     * @param {Expression} x1 
-     * @param {Expression} y1 
-     * @param {Expression} w1 
-     * @param {Expression} h1 
-     * @param {Expression} x2 
-     * @param {Expression} y2 
-     * @param {Expression} w2 
-     * @param {Expression} h2 
+     * @param {Token} keyword
+     * @param {{ arity: number, numeric?: boolean, call: Function }} builtin
+     * @param {Expression[]} args
      */
-    constructor(x1, y1, w1, h1, x2, y2, w2, h2) {
+    constructor(keyword, builtin, args) {
         super();
-
-        this.x1 = x1;
-        this.y1 = y1;
-        this.w1 = w1;
-        this.h1 = h1;
-        this.x2 = x2;
-        this.y2 = y2;
-        this.w2 = w2;
-        this.h2 = h2;
+        this.keyword = keyword;
+        this.builtin = builtin;
+        this.args = args;
     }
 
-    async interpret(environment) {
-        return aabb(
-            await this.x1.interpret(environment),
-            await this.y1.interpret(environment),
-            await this.w1.interpret(environment),
-            await this.h1.interpret(environment),
-            await this.x2.interpret(environment),
-            await this.y2.interpret(environment),
-            await this.w2.interpret(environment),
-            await this.h2.interpret(environment),
-        );
-    }
-}
-
-class GetExpression extends Expression {
-    /**
-     * @param {Expression} object 
-     * @param {Token} property 
-     */
-    constructor(object, property) {
-        super();
-        this.object = object;
-        this.property = property;
-    }
-
-    async interpret(environment) {
-        const obj = await this.object.interpret(environment);
-
-        assert(obj && typeof obj == 'object', `Cannot access property ${this.property.lexeme} on a non-object.`);
-
-        return obj[this.property.lexeme];
-    }
-}
-
-////////////////////////////
-//////// STATEMENTS ////////
-////////////////////////////
-class Statement {
-    /**
-     * @param {Environment} environment 
-     */
-    async interpret(environment) {}
-}
-
-class BlockStatement extends Statement {
-    /**
-     * @param {Statement[]} statements 
-     */
-    constructor(statements) {
-        super();
-
-        this.statements = statements; 
-    }
-
-    async interpret(environment) {
-        await this.executeBlock(new Environment(environment));
-    }
-
-    /**
-     * @param {Statement[]} statements 
-     * @param {Environment} environment 
-     */
-    async executeBlock(environment) {
-        for (const statement of this.statements) {
-            await statement.interpret(environment);
+    async evaluate(environment) {
+        const values = [];
+        for (const arg of this.args) {
+            const value = await arg.evaluate(environment);
+            if (this.builtin.numeric) {
+                expectNumber(value, this.keyword.lexeme);
+            }
+            values.push(value);
         }
+
+        return this.builtin.call(...values);
     }
+}
+
+
+/* ==========================================================================
+ * Statements
+ * ======================================================================= */
+
+class Statement {
+    /** Source line, set by the parser */
+    line;
+
+    /**
+     * @param {Environment} environment
+     */
+    async execute(environment) {}
 }
 
 class ExpressionStatement extends Statement {
     /**
-     * @param {Expression} expr 
+     * @param {Expression} expression
      */
-    constructor(expr) {
+    constructor(expression) {
         super();
-
-        this.expr = expr; 
+        this.expression = expression;
     }
 
-    async interpret(environment) {
-        await this.expr.interpret(environment);
-        return null;
+    async execute(environment) {
+        await this.expression.evaluate(environment);
     }
 }
 
-class FunctionStatement extends BlockStatement {
+/**
+ * Commands are statements that take a fixed number of comma-separated
+ * arguments, like `FILL x, y, width, height`. Each command's `run` receives
+ * the Runtime followed by the evaluated arguments.
+ */
+const COMMANDS = new Map([
+    ['PRINT', { usage: 'PRINT value', arity: 1, run: (runtime, value) => runtime.onPrint(value) }],
+    ['DEBUG', { usage: 'DEBUG value', arity: 1, run: (runtime, value) => console.log(value) }],
+    ['SLEEP', { usage: 'SLEEP milliseconds', arity: 1, run: (runtime, ms) => runtime.sleep(expectNumber(ms, 'SLEEP')) }],
+
+    // Graphics
+    ['WINDOW', { usage: 'WINDOW width, height', arity: 2, run: (runtime, width, height) => runtime.openWindow(width, height) }],
+
+    ['COLOR', { usage: 'COLOR "red"', arity: 1, run: (runtime, color) => {
+        runtime.graphics.fillStyle = color;
+    } }],
+
+    ['FILL', { usage: 'FILL x, y, width, height', arity: 4, run: (runtime, x, y, width, height) => {
+        runtime.graphics.fillRect(x, y, width, height);
+    } }],
+
+    ['TEXT', { usage: 'TEXT x, y, text', arity: 3, run: (runtime, x, y, text) => {
+        const ctx = runtime.graphics;
+        ctx.font = TEXT_FONT;
+        ctx.fillText(String(text), x, y);
+    } }],
+
+    ['DRAW', { usage: 'DRAW x, y, sprite, frame', arity: 4, run: (runtime, x, y, name, frame) => {
+        const sprite = runtime.sprites.get(name);
+        if (!sprite) {
+            throw new OneShotError(`Undefined sprite: ${name}`);
+        }
+
+        const ctx = runtime.graphics;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(sprite.getFrame(frame).image, Math.round(x), Math.round(y));
+    } }],
+
+    // Sprite
+    ['SIZE', { usage: 'SIZE width, height', arity: 2, run: (runtime, width, height) => {
+        const sprite = runtime.requireSprite('SIZE');
+        sprite.width = expectNumber(width, 'SIZE');
+        sprite.height = expectNumber(height, 'SIZE');
+    } }],
+
+    ['COLORDATA', { usage: 'COLORDATA "#", "green"', arity: 2, run: (runtime, char, color) => {
+        runtime.requireFrame('COLORDATA').setColor(char, color);
+    } }],
+
+    ['PIXELDATA', { usage: 'PIXELDATA " ## "', arity: 1, run: (runtime, row) => {
+        const sprite = runtime.requireSprite('PIXELDATA');
+        const frame = runtime.requireFrame('PIXELDATA');
+        row = String(row);
+
+        if (sprite.width !== null && row.length > sprite.width) {
+            throw new OneShotError(`PIXELDATA is ${row.length} wide, but the SPRITE SIZE is ${sprite.width}`);
+        }
+
+        if (sprite.height !== null && frame.rows.length >= sprite.height) {
+            throw new OneShotError(`FRAME has more PIXELDATA rows than the SPRITE height of ${sprite.height}`);
+        }
+
+        frame.addRow(row);
+    } }],
+
+    // BGM & SFX
+    ['BAR', { usage: 'BAR "C4 D4 E4 --"', arity: 1, run: (runtime, bar) => {
+        runtime.requireSheet('BAR').addBar(bar);
+    } }],
+
+    ['GAIN', { usage: 'GAIN 80', arity: 1, run: (runtime, gain) => {
+        runtime.requireSheet('GAIN').gain = expectNumber(gain, 'GAIN') / 100;
+    } }],
+
+    ['TYPE', { usage: 'TYPE "square"', arity: 1, run: (runtime, type) => {
+        const waveType = String(type).toLowerCase();
+        if (!WAVE_TYPES.has(waveType)) {
+            throw new OneShotError(`TYPE must be one of ${[...WAVE_TYPES].join(', ')}`);
+        }
+
+        runtime.requireSheet('TYPE').type = waveType;
+    } }],
+
+    ['BPM', { usage: 'BPM 120', arity: 1, run: (runtime, bpm) => {
+        runtime.requireSong('BPM').bpm = expectNumber(bpm, 'BPM');
+    } }],
+
+    ['LOOP', { usage: 'LOOP TRUE', arity: 1, run: (runtime, loop) => {
+        runtime.requireSong('LOOP').loop = isTruthy(loop);
+    } }],
+
+    ['PLAY', { usage: 'PLAY "song"', arity: 1, run: (runtime, name) => runtime.getSong(name).play() }],
+    ['STOP', { usage: 'STOP "song"', arity: 1, run: (runtime, name) => runtime.getSong(name).stop() }],
+]);
+
+/** FILL ALL fills the whole window */
+const FILL_ALL_COMMAND = { arity: 0, run: (runtime) => {
+    const ctx = runtime.graphics;
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+} };
+
+class CommandStatement extends Statement {
     /**
-     * 
-     * @param {Token} name 
-     * @param {Token[]} params 
-     * @param {Statement[]} body 
+     * @param {{ run: Function }} command One of COMMANDS
+     * @param {Expression[]} args
      */
-    constructor(name, params, body) {
-        super(body);
-        this.name = name;
-        this.params = params;
+    constructor(command, args) {
+        super();
+        this.command = command;
+        this.args = args;
     }
 
-    async interpret(environment) {
-        const func = new Func(this, this.params.length);   
-        environment.define(this.name.lexeme, func);
-        return null;
+    async execute(environment) {
+        const runtime = environment.runtime;
+        const values = [];
+        for (const arg of this.args) {
+            values.push(await arg.evaluate(environment));
+        }
+
+        // A stopped program must not draw over the program that replaced it
+        if (runtime.stopped) {
+            throw new StopSignal();
+        }
+
+        await this.command.run(runtime, ...values);
     }
 }
 
 class LetStatement extends Statement {
     /**
-     * @param {Token} name 
-     * @param {Expression} initializer 
+     * @param {Token} name
+     * @param {Expression?} initializer
      */
     constructor(name, initializer) {
         super();
-
         this.name = name;
         this.initializer = initializer;
     }
 
-    async interpret(environment) {
-        let value = null;
-        if (this.initializer != null) {
-            value = await this.initializer.interpret(environment);
-        }
-
+    async execute(environment) {
+        const value = this.initializer ? await this.initializer.evaluate(environment) : null;
         environment.define(this.name.lexeme, value);
-        return null;
     }
 }
 
+/**
+ * LET ARRAY[SIZE] declares an array filled with NULL
+ */
 class LetArrayStatement extends Statement {
     /**
-     * @param {Token} name 
-     * @param {Expression} size 
+     * @param {Token} name
+     * @param {Expression} size
      */
     constructor(name, size) {
         super();
-
         this.name = name;
         this.size = size;
     }
 
-    async interpret(environment) {
-        const size = await this.size.interpret(environment);
+    async execute(environment) {
+        const size = await this.size.evaluate(environment);
 
         if (!Number.isInteger(size) || size < 0) {
-            throw new Error(`Invalid array size for '${this.name.lexeme}': ${size}`);
+            throw new OneShotError(`Invalid array size for ${this.name.lexeme}: ${size}`);
         }
 
-        const array = new Array(size).fill(null);
-        environment.define(this.name.lexeme, array);
-        return null;
+        environment.define(this.name.lexeme, new Array(size).fill(null));
     }
 }
 
-class DebugStatement extends Statement {
-
-    expr;
-
+class FunctionStatement extends Statement {
     /**
-     * @param {Expression} expr 
+     * @param {Token} name
+     * @param {Token[]} params
+     * @param {Statement[]} body
      */
-    constructor(expr) {
+    constructor(name, params, body) {
         super();
-
-        this.expr = expr; 
+        this.name = name;
+        this.params = params;
+        this.body = body;
     }
 
-    async interpret(environment) {
-        console.log(await this.expr.interpret(environment));
-        return null;
-    }
-}
-
-class PrintStatement extends Statement {
-    #printCallback;
-
-    /**
-     * @param {Expression} expr 
-     */
-    constructor(expr, printCallback) {
-        super();
-
-        this.#printCallback = printCallback;
-        this.expr = expr; 
-    }
-
-    async interpret(environment) {
-        this.#printCallback(await this.expr.interpret(environment));
-        return null;
+    async execute(environment) {
+        environment.define(this.name.lexeme, new OneShotFunction(this, environment));
     }
 }
 
 class ReturnStatement extends Statement {
     /**
-     * @param {Token} keyword 
-     * @param {Expression} returnValue 
+     * @param {Expression?} value
      */
-    constructor(keyword, returnValue) {
+    constructor(value) {
         super();
-        this.keyword = keyword;
-        this.returnValue = returnValue;
+        this.value = value;
     }
 
-    async interpret(environment) {
-        let value = null;
-        if (this.returnValue != null) value = await this.returnValue.interpret(environment);
-        
-        throw new Return(value);
+    async execute(environment) {
+        const value = this.value ? await this.value.evaluate(environment) : null;
+        throw new ReturnSignal(value);
     }
 }
 
-class WindowStatement extends Statement {
-
-    widthExpression;
-    heightExpression;
-
+/**
+ * THEN ... END, a block with its own scope
+ */
+class BlockStatement extends Statement {
     /**
-     * @param {Expression} widthExpression 
-     * @param {Expression} heightExpression 
+     * @param {Statement[]} statements
      */
-    constructor(widthExpression, heightExpression) {
+    constructor(statements) {
         super();
-
-        this.widthExpression = widthExpression;
-        this.heightExpression = heightExpression;
+        this.statements = statements;
     }
 
-    async interpret(environment) {
-        if (!canvas) {
-            canvas = document.createElement('canvas');
-            document.body.appendChild(canvas);
-        }
-
-        canvas.setup();
-
-        ctx = canvas.getContext('2d');
-
-        canvas.width = await this.widthExpression.interpret(environment);
-        canvas.height = await this.heightExpression.interpret(environment);
-
-        return null;
-    }
-
-}
-
-class ColorStatement extends Statement {
-
-    colorExpression;
-
-    /**
-     * @param {Expression} colorExpression 
-     */
-    constructor(colorExpression) {
-        super();
-
-        this.colorExpression = colorExpression;
-    }
-
-    async interpret(environment) {
-        ctx.fillStyle = await this.colorExpression.interpret(environment);
-        return null;
-    }
-}
-
-class FillStatement extends Statement {
-
-    xExpression;
-    yExpression;
-    widthExpression;
-    heightExpression;
-
-    /**
-     * @param {Expression} xExpression 
-     * @param {Expression} yExpression 
-     * @param {Expression} widthExpression 
-     * @param {Expression} heightExpression 
-     */
-    constructor(xExpression, yExpression, widthExpression, heightExpression) {
-        super();
-
-        this.xExpression = xExpression;
-        this.yExpression = yExpression;
-        this.widthExpression = widthExpression;
-        this.heightExpression = heightExpression;
-    }
-
-    async interpret(environment) {
-        if (!this.xExpression) {
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            return null;
-        }
-
-        const x = await this.xExpression.interpret(environment);
-        const y = await this.yExpression.interpret(environment);
-        const w = await this.widthExpression.interpret(environment);
-        const h = await this.heightExpression.interpret(environment);
-
-        ctx.fillRect(x, y, w, h);
-        return null;
-    }
-}
-
-class TextStatement extends Statement {
-
-    xExpression;
-    yExpression;
-    textExpression;
-
-    /**
-     * @param {Expression} xExpression 
-     * @param {Expression} yExpression 
-     * @param {Expression} textExpression 
-     */
-    constructor(xExpression, yExpression, textExpression) {
-        super();
-
-        this.xExpression = xExpression;
-        this.yExpression = yExpression;
-        this.textExpression = textExpression;
-    }
-
-    async interpret(environment) {
-        const x = await this.xExpression.interpret(environment);
-        const y = await this.yExpression.interpret(environment);
-        const text = await this.textExpression.interpret(environment);
-
-        ctx.font = '20px dejavu, monospace';
-        ctx.fillText(text, x, y);
-        return null;
-    }
-}
-
-class SleepStatement extends Statement {
-
-    sleepExpression
-
-    /**
-     * @param {Expression} sleepExpression 
-     */
-    constructor(sleepExpression) {
-        super();
-
-        this.sleepExpression = sleepExpression;
-    }
-
-    async interpret(environment) {
-        const sleepDuration = await this.sleepExpression.interpret(environment);
-        await sleep(sleepDuration);
-        return null;
-    }
-}
-
-class SizeStatement extends Statement {
-
-    sizeXExpression;
-    sizeYExpression;
-
-    /**
-     * @param {Expression} sizeXExpression 
-     * @param {Expression} sizeYExpression 
-     */
-    constructor(sizeXExpression, sizeYExpression) {
-        super();
-
-        this.sizeXExpression = sizeXExpression;
-        this.sizeYExpression = sizeYExpression;
-    }
-
-    async interpret(environment) {
-        const currentSprite = environment.currentSprite;
-
-        if (!currentSprite) {
-            throw new Error('SIZE can only be used in SPRITE block');
-        }
-
-        const sizeXValue = await this.sizeXExpression.interpret(environment);
-        const sizeYValue = await this.sizeYExpression.interpret(environment);
-
-        currentSprite.sizeX = sizeXValue;
-        currentSprite.sizeY = sizeYValue;
-
-        return null;
-    }
-}
-
-class DrawStatement extends Statement {
-
-    xExpression;
-    yExpression;
-    nameExpression;
-    frameIndexExpression;
-
-    /**
-     * @param {Expression} xExpression 
-     * @param {Expression} yExpression 
-     * @param {Expression} nameExpression 
-     * @param {Expression} frameIndexExpression 
-     */
-    constructor(xExpression, yExpression, nameExpression, frameIndexExpression) {
-        super();
-
-        this.xExpression = xExpression;
-        this.yExpression = yExpression;
-        this.nameExpression = nameExpression;
-        this.frameIndexExpression = frameIndexExpression;
-    }
-
-    async interpret(environment) {
-        const x = await this.xExpression.interpret(environment);
-        const y = await this.yExpression.interpret(environment);
-        const name = await this.nameExpression.interpret(environment);
-        const frameSpec = await this.frameIndexExpression.interpret(environment);
-
-        const sprite = environment.getSprite(name);
-
-        let frame = null;
-        if (typeof frameSpec == 'number') {
-            frame = sprite.frames[frameSpec];
-        } else if (typeof frameSpec == 'string') {
-            frame = sprite.frameMap.get(frameSpec);
-        }
-
-        const colorBefore = ctx.fillStyle;
-        
-        for (let i = 0; i < frame.pixelData.length; i++) {
-            for (let j = 0; j < frame.pixelData[i].length; j++) {
-                const char = frame.pixelData[i][j];
-                const color = frame.colorData.get(char);
-                
-                if (!color) {
-                    continue;
-                }
-
-                ctx.fillStyle = color;
-
-                ctx.fillRect(x + j * 4, y + i * 4, 4, 4);
-            }
-        }
-
-        ctx.fillStyle = colorBefore;
-
-        return null;
-    }
-}
-
-class ColorDataStatement extends Statement {
-
-    charExpression;
-    colorExpression;
-
-    /**
-     * 
-     * @param {Expression} charExpression 
-     * @param {Expression} colorExpression 
-     */
-    constructor(charExpression, colorExpression) {
-        super();
-
-        this.charExpression = charExpression;
-        this.colorExpression = colorExpression;
-    }
-
-    async interpret(environment) {
-        const charValue = await this.charExpression.interpret(environment);
-        const colorValue = await this.colorExpression.interpret(environment);
-
-        if (!environment.currentSprite) {
-            throw new Error('COLORDATA can be used in SPRITE block')
-        }
-
-        environment.currentSprite.currentFrame.colorData.set(charValue, colorValue);
-
-        return null;
-    }
-}
-
-class PixelDataStatement extends Statement {
-
-    dataExpression;
-
-    /**
-     * 
-     * @param {Expression} dataExpression 
-     */
-    constructor(dataExpression) {
-        super();
-
-        this.dataExpression = dataExpression;
-    }
-
-    async interpret(environment) {
-        const dataValue = await this.dataExpression.interpret(environment);
-        const currentSprite = environment.currentSprite;
-
-        if (!currentSprite) {
-            throw new Error('PIXELDATA can be used in SPRITE block');
-        }
-
-        if (dataValue.length > currentSprite.sizeX) {
-            throw new Error('PIXELDATA exceeds SPRITE width');
-        }
-
-        if (currentSprite.currentFrame.pixelData.length + 1 > currentSprite.sizeY) {
-            throw new Error('PIXELDATA exceeds SPRITE height');
-        }
-
-        currentSprite.currentFrame.pixelData.push(dataValue);
-
-        return null;
-    }
-}
-
-class BarStatement extends Statement {
-
-    barExpression;
-
-    /**
-     * 
-     * @param {Expression} barExpression 
-     */
-    constructor(barExpression) {
-        super();
-
-        this.barExpression = barExpression;
-    }
-
-    async interpret(environment) {
-        const bar = await this.barExpression.interpret(environment);
-        const currentSong = environment.currentSong;
-        const currentSheet = currentSong.currentSheet;
-
-        if (!(currentSong && currentSheet)) {
-            throw new Error('BAR misuse');
-        }
-
-        currentSheet.bars += `${bar}\n`;
-
-        return null;
-    }
-}
-
-class GainStatement extends Statement {
-
-    gainExpression;
-
-    /**
-     * @param {Expression} gainExpression 
-     */
-    constructor(gainExpression) {
-        super();
-        
-        this.gainExpression = gainExpression;
-    }
-
-    async interpret(environment) {
-        const gainValue = await this.gainExpression.interpret(environment);
-
-        const currentSong = environment.currentSong;
-        currentSong.currentSheet.gain = gainValue / 100;
-
-        return null;
-    }
-}
-
-class BpmStatement extends Statement {
-
-    bpmExpression;
-
-    /**
-     * @param {Expression} bpmExpression 
-     */
-    constructor(bpmExpression) {
-        super();
-
-        this.bpmExpression = bpmExpression;
-    }
-
-    async interpret(environment) {
-        const bpmValue = await this.bpmExpression.interpret(environment);
-
-        environment.currentSong.bpm = bpmValue;
-
-        return null;
-    }
-}
-
-class LoopStatement extends Statement {
-
-    loopExpression;
-
-    /**
-     * @param {Expression} loopExpression 
-     */
-    constructor(loopExpression) {
-        super();
-
-        this.loopExpression = loopExpression;
-    }
-
-    async interpret(environment) {
-        const loopValue = await this.loopExpression.interpret(environment);
-
-        environment.currentSong.loop = isTruthy(loopValue);
-
-        return null;
-    }
-}
-
-class TypeStatement extends Statement {
-
-    waveTypeExpression;
-
-    /**
-     * @param {Expression} waveTypeExpression 
-     */
-    constructor(waveTypeExpression) {
-        super();
-
-        this.waveTypeExpression = waveTypeExpression;
-    }
-
-    async interpret(environment) {
-        const waveTypeValue = await this.waveTypeExpression.interpret(environment);
-
-        const currentSong = environment.currentSong;
-        currentSong.currentSheet.type = waveTypeValue;
-
-        return null;
-    }
-}
-
-class PlayStatement extends Statement {
-
-    songNameExpression;
-
-    /**
-     * @param {Expression} songNameExpression 
-     */
-    constructor(songNameExpression) {
-        super();
-
-        this.songNameExpression = songNameExpression;
-    }
-
-    async interpret(environment) {
-        const song = environment.getSong(await this.songNameExpression.interpret(environment));
-        song.play();
-
-        return null;
-    }
-}
-
-class StopStatement extends Statement {
-
-    songNameExpression;
-
-    /**
-     * @param {Expression} songNameExpression 
-     */
-    constructor(songNameExpression) {
-        super();
-
-        this.songNameExpression = songNameExpression;
-    }
-
-    async interpret(environment) {
-        const song = environment.getSong(await this.songNameExpression.interpret(environment));
-        song.stop();
-
-        return null;
+    async execute(environment) {
+        await executeStatements(this.statements, new Environment(environment));
     }
 }
 
 class IfStatement extends Statement {
-
-    conditionExpression;
-    ifBranch;
-    elseBranch;
-
     /**
-     * @param {Expression} conditionExpression 
-     * @param {Statement[]} ifBranch 
-     * @param {Statement[]} elseBranch 
+     * @param {Expression} condition
+     * @param {Statement[]} thenBranch
+     * @param {Statement[]} elseBranch
      */
-    constructor(conditionExpression, ifBranch, elseBranch) {
+    constructor(condition, thenBranch, elseBranch) {
         super();
-
-        this.conditionExpression = conditionExpression;
-        this.ifBranch = ifBranch;
+        this.condition = condition;
+        this.thenBranch = thenBranch;
         this.elseBranch = elseBranch;
     }
 
-    async interpret(environment) {
-
-        const condition = await this.conditionExpression.interpret(environment);
-
-        if (isTruthy(condition)) {
-            for (const statement of this.ifBranch) {
-                await statement.interpret(environment);
-            }
-        } else {
-            for (const statement of this.elseBranch) {
-                await statement.interpret(environment);
-            }
-        }
-
-        return null;
+    async execute(environment) {
+        const condition = await this.condition.evaluate(environment);
+        await executeStatements(isTruthy(condition) ? this.thenBranch : this.elseBranch, environment);
     }
 }
 
-class WhileBlock extends BlockStatement {
-
-    conditionExpression;
-
+class WhileStatement extends Statement {
     /**
-     * 
-     * @param {Statement[]} statements 
-     * @param {Expression} conditionExpression 
+     * @param {Expression} condition
+     * @param {Statement[]} body
      */
-    constructor(statements, conditionExpression) {
-        super(statements);
-
-        this.conditionExpression = conditionExpression;
+    constructor(condition, body) {
+        super();
+        this.condition = condition;
+        this.body = body;
     }
 
-    async interpret(environment) {
-        let condition = await this.conditionExpression.interpret(environment);
+    async execute(environment) {
+        const runtime = environment.runtime;
 
-        while (isTruthy(condition) && running) {
-            await this.executeBlock(new Environment(environment));
-            condition = await this.conditionExpression.interpret(environment);
+        while (isTruthy(await this.condition.evaluate(environment))) {
+            await executeStatements(this.body, new Environment(environment));
+            await runtime.loopTick();
         }
-
-        return null;
     }
 }
 
-class ForBlock extends BlockStatement {
-    
-    initializer;
-    condition;
-    increment;
-
+class ForStatement extends Statement {
     /**
-     * @param {Statement[]} statements 
-     * @param {Statement} initializer 
-     * @param {Expression} condition 
-     * @param {Statement} increment 
+     * @param {Statement} initializer
+     * @param {Expression} condition
+     * @param {Statement} increment
+     * @param {Statement[]} body
      */
-    constructor(statements, initializer, condition, increment) {
-        super(statements);
-
+    constructor(initializer, condition, increment, body) {
+        super();
         this.initializer = initializer;
         this.condition = condition;
         this.increment = increment;
+        this.body = body;
     }
 
-    async interpret(environment) {
+    async execute(environment) {
+        const runtime = environment.runtime;
 
-        await this.initializer.interpret(environment);
+        // The loop variable lives in its own scope, so it doesn't leak out of the loop
+        const loopEnvironment = new Environment(environment);
+        await this.initializer.execute(loopEnvironment);
 
-        let condition = await this.condition.interpret(environment);
-        while (isTruthy(condition) && running) {
-            await this.executeBlock(new Environment(environment));
-
-            await this.increment.interpret(environment);
-
-            condition = await this.condition.interpret(environment);
+        while (isTruthy(await this.condition.evaluate(loopEnvironment))) {
+            await executeStatements(this.body, new Environment(loopEnvironment));
+            await this.increment.execute(loopEnvironment);
+            await runtime.loopTick();
         }
-
-        return null;
     }
 }
 
-class SpriteBlock extends BlockStatement {
-
-    nameExpression;
-
+class SpriteStatement extends Statement {
     /**
-     * @param {Statement[]} statements 
-     * @param {Expression} nameExpression 
+     * @param {Expression} name
+     * @param {Statement[]} body
      */
-    constructor(statements, nameExpression) {
-        super(statements);
-        
-        this.nameExpression = nameExpression;
+    constructor(name, body) {
+        super();
+        this.name = name;
+        this.body = body;
     }
 
-    async interpret(environment) {
-        const nameValue = await this.nameExpression.interpret(environment);
+    async execute(environment) {
+        const runtime = environment.runtime;
+        const sprite = new Sprite();
+        runtime.sprites.set(await this.name.evaluate(environment), sprite);
 
-        environment.addNewSprite(nameValue);
-
-        await this.executeBlock(new Environment(environment));
-
-        environment.resetSprite();
-
-        return null;
-    }
-}
-
-class FrameBlock extends BlockStatement {
-
-    frameNameExpression;
-
-    /**
-     * @param {Statement[]} statements 
-     * @param {Expression} frameNameExpression 
-     */
-    constructor(statements, frameNameExpression) {
-        super(statements);
-
-        this.frameNameExpression = frameNameExpression;
-    }
-
-    async interpret(environment) {
-        const currentSprite = environment.currentSprite;
-
-        if (!currentSprite) {
-            throw new Error('FRAME block can only be used in SPRITE block');
+        const previous = runtime.currentSprite;
+        runtime.currentSprite = sprite;
+        try {
+            await executeStatements(this.body, new Environment(environment));
+        } finally {
+            runtime.currentSprite = previous;
         }
-
-        currentSprite.frameIndex++;
-        currentSprite.currentFrame = new Frame(await this.frameNameExpression.interpret(environment));
-
-        await this.executeBlock(new Environment(environment));
-
-        return null;
     }
 }
 
-class SongBlock extends BlockStatement {
-
-    nameExpression;
-
+class FrameStatement extends Statement {
     /**
-     * @param {Statement[]} statements 
-     * @param {Expression} nameExpression 
+     * @param {Expression?} name Frames can be drawn by index, so the name is optional
+     * @param {Statement[]} body
      */
-    constructor(statements, nameExpression) {
-        super(statements);
-
-        this.nameExpression = nameExpression;
+    constructor(name, body) {
+        super();
+        this.name = name;
+        this.body = body;
     }
 
-    async interpret(environment) {
-        const nameValue = await this.nameExpression.interpret(environment);
+    async execute(environment) {
+        const sprite = environment.runtime.requireSprite('FRAME');
+        const name = this.name ? await this.name.evaluate(environment) : null;
+        sprite.addFrame(name);
 
-        environment.addNewSong(nameValue);
-
-        await this.executeBlock(new Environment(environment));
-
-        environment.resetSong();
-
-        return null;
+        await executeStatements(this.body, new Environment(environment));
     }
 }
 
-class SheetBlock extends BlockStatement {
+class SongStatement extends Statement {
+    /**
+     * @param {Expression} name
+     * @param {Statement[]} body
+     */
+    constructor(name, body) {
+        super();
+        this.name = name;
+        this.body = body;
+    }
 
-    async interpret(environment) {
-        const newSheet = new Sheet(environment.currentSong);
-        environment.currentSong.addSheet(newSheet);
+    async execute(environment) {
+        const runtime = environment.runtime;
+        const song = new Song();
+        runtime.songs.set(await this.name.evaluate(environment), song);
 
-        await this.executeBlock(new Environment(environment));
-
-        return null;
+        runtime.currentSong = song;
+        try {
+            await executeStatements(this.body, new Environment(environment));
+        } finally {
+            runtime.currentSong = null;
+        }
     }
 }
+
+class SheetStatement extends Statement {
+    /**
+     * @param {Statement[]} body
+     */
+    constructor(body) {
+        super();
+        this.body = body;
+    }
+
+    async execute(environment) {
+        const runtime = environment.runtime;
+        runtime.currentSheet = runtime.requireSong('SHEET').addSheet();
+        try {
+            await executeStatements(this.body, new Environment(environment));
+        } finally {
+            runtime.currentSheet = null;
+        }
+    }
+}
+
+
+/* ==========================================================================
+ * Parser: tokens → statements
+ * ======================================================================= */
 
 class Parser {
 
     #tokens;
-    #current;
-    #callbacks;
+    #current = 0;
 
     /**
-     * @param {Token[]} tokens 
+     * @param {Token[]} tokens
      */
-    constructor(tokens, callbacks) {
+    constructor(tokens) {
         this.#tokens = tokens;
-        this.#current = 0;
-        this.#callbacks = callbacks;
     }
 
     parse() {
@@ -2221,15 +1817,19 @@ class Parser {
     }
 
     #declaration() {
+        const line = this.#peek().line;
+
+        let statement;
         if (this.#match(TokenType.FUNC)) {
-            return this.#funcDeclaration();
+            statement = this.#funcDeclaration();
+        } else if (this.#match(TokenType.LET)) {
+            statement = this.#letDeclaration();
+        } else {
+            statement = this.#statement();
         }
 
-        if (this.#match(TokenType.LET)) {
-            return this.#varDeclaration(); 
-        }
-
-        return this.#statement();
+        statement.line = line;
+        return statement;
     }
 
     #funcDeclaration() {
@@ -2237,440 +1837,144 @@ class Parser {
         this.#consume(TokenType.LEFT_P, 'Expected ( after function name');
 
         const params = [];
-
         if (!this.#check(TokenType.RIGHT_P)) {
             do {
-                assert(params.length < 255, 'Can\'t have more than 255 parameters');
-
-                params.push(this.#consume(TokenType.IDENTIFIER, 'Expect parameter name'));
+                params.push(this.#consume(TokenType.IDENTIFIER, 'Expected parameter name'));
             } while (this.#match(TokenType.COMMA));
         }
 
         this.#consume(TokenType.RIGHT_P, 'Expected ) after parameters');
         this.#consume(TokenType.THEN, 'Expected THEN after parameters');
 
-        const body = this.#block();
-        return new FunctionStatement(name, params, body);
+        return new FunctionStatement(name, params, this.#block('FUNC'));
     }
 
-    #varDeclaration() {
-        const name = this.#consume(TokenType.IDENTIFIER, 'Expected variable name.');
+    #letDeclaration() {
+        const name = this.#consume(TokenType.IDENTIFIER, 'Expected variable name');
 
-        let initializer = null;
         if (this.#match(TokenType.LEFT_B)) {
-            initializer = this.#expression();
+            const size = this.#expression();
             this.#consume(TokenType.RIGHT_B, 'Missing bracket ]');
-            return new LetArrayStatement(name, initializer);
+            return new LetArrayStatement(name, size);
         }
 
-        if (this.#match(TokenType.EQUAL)) {
-            initializer = this.#expression();
-        }
-
+        const initializer = this.#match(TokenType.EQUAL) ? this.#expression() : null;
         return new LetStatement(name, initializer);
     }
 
     #statement() {
-        if (this.#match(TokenType.DEBUG)) {
-            return this.#debugStatement();
+        const keyword = this.#peek();
+
+        if (COMMANDS.has(keyword.type)) {
+            this.#advance();
+            return this.#command(keyword, COMMANDS.get(keyword.type));
         }
 
-        if (this.#match(TokenType.PRINT)) {
-            return this.#printStatement();
-        }
+        if (this.#match(TokenType.RETURN)) return this.#returnStatement();
+        if (this.#match(TokenType.THEN)) return new BlockStatement(this.#block('THEN'));
+        if (this.#match(TokenType.IF)) return this.#ifStatement();
+        if (this.#match(TokenType.WHILE)) return this.#whileStatement();
+        if (this.#match(TokenType.FOR)) return this.#forStatement();
+        if (this.#match(TokenType.SPRITE)) return new SpriteStatement(this.#expression(), this.#block('SPRITE'));
+        if (this.#match(TokenType.FRAME)) return this.#frameStatement();
+        if (this.#match(TokenType.SONG)) return new SongStatement(this.#expression(), this.#block('SONG'));
+        if (this.#match(TokenType.SHEET)) return new SheetStatement(this.#block('SHEET'));
 
-        if (this.#match(TokenType.RETURN)) {
-            return this.#returnStatement();
-        }
-        
-        if (this.#match(TokenType.WINDOW)) {
-            return this.#windowStatement();
-        }
-
-        if (this.#match(TokenType.COLOR)) {
-            return this.#colorStatement();
-        }
-
-        if (this.#match(TokenType.FILL)) {
-            if (this.#match(TokenType.ALL)) {
-                return new FillStatement();
-            }
-
-            return this.#fillStatement();
-        }
-
-        if (this.#match(TokenType.TEXT)) {
-            return this.#textStatement();
-        }
-
-        if (this.#match(TokenType.SLEEP)) {
-            return this.#sleepStatement();
-        }
-
-        if (this.#match(TokenType.SIZE)) {
-            return this.#sizeStatement();
-        }
-
-        if (this.#match(TokenType.DRAW)) {
-            return this.#drawStatement();
-        }
-
-        if (this.#match(TokenType.COLORDATA)) {
-            return this.#colorDataStatement();
-        }
-
-        if (this.#match(TokenType.PIXELDATA)) {
-            return this.#pixelDataStatement();
-        }
-
-        if (this.#match(TokenType.BAR)) {
-            return this.#barStatement();
-        }
-
-        if (this.#match(TokenType.GAIN)) {
-            return this.#gainStatement();
-        }
-
-        if (this.#match(TokenType.BPM)) {
-            return this.#bpmStatement();
-        }
-
-        if (this.#match(TokenType.LOOP)) {
-            return this.#loopStatement();
-        }
-
-        if (this.#match(TokenType.TYPE)) {
-            return this.#typeStatement();
-        }
-
-        if (this.#match(TokenType.PLAY)) {
-            return this.#playStatement();
-        }
-
-        if (this.#match(TokenType.STOP)) {
-            return this.#stopStatement();
-        }
-
-        if (this.#match(TokenType.THEN)) {
-            return new BlockStatement(this.#block());
-        }
-
-        if (this.#match(TokenType.IF)) {
-            return this.#ifStatement();
-        }
-
-        if (this.#match(TokenType.WHILE)) {
-            return this.#whileBlock();
-        }
-
-        if (this.#match(TokenType.FOR)) {
-            return this.#forBlock();
-        }
-
-        if (this.#match(TokenType.SPRITE)) {
-            return this.#spriteBlock();
-        }
-
-        if (this.#match(TokenType.FRAME)) {
-            return this.#frameBlock();
-        }
-
-        if (this.#match(TokenType.SONG)) {
-            return this.#songBlock();
-        }
-
-        if (this.#match(TokenType.SHEET)) {
-            return this.#sheetBlock();
-        }
-
-        return this.#expressionStatement();
+        return new ExpressionStatement(this.#expression());
     }
 
-    #block() {
-        const statements = [];
-
-        while (!this.#check(TokenType.END) && !this.#isAtEnd()) {
-            statements.push(this.#declaration());
+    /**
+     * Parses the comma-separated arguments of a command
+     * @param {Token} keyword
+     */
+    #command(keyword, command) {
+        if (keyword.type === TokenType.FILL && this.#match(TokenType.ALL)) {
+            return new CommandStatement(FILL_ALL_COMMAND, []);
         }
 
-        this.#consume(TokenType.END, `Expected 'END' after block.`);
+        const args = [];
+        for (let i = 0; i < command.arity; i++) {
+            if (i > 0) {
+                this.#consume(TokenType.COMMA, `Missing comma. Usage: ${command.usage}`);
+            }
+            args.push(this.#expression());
+        }
+
+        return new CommandStatement(command, args);
+    }
+
+    /**
+     * Parses statements until END, and consumes the END
+     * @param {string} opener Keyword that opened the block, for the error message
+     */
+    #block(opener) {
+        const statements = this.#statementsUntil(TokenType.END);
+        this.#consume(TokenType.END, `Expected END to close ${opener}`);
         return statements;
     }
 
-    #expressionStatement() {
-        const expression = this.#expression();
-        return new ExpressionStatement(expression)
-    }
+    #statementsUntil(...terminators) {
+        const statements = [];
 
-    #debugStatement() {
-        const expression = this.#expression();
-        return new DebugStatement(expression);
-    }
+        while (!terminators.some(type => this.#check(type)) && !this.#isAtEnd()) {
+            statements.push(this.#declaration());
+        }
 
-    #printStatement() {
-        const expression = this.#expression();
-        return new PrintStatement(expression, this.#callbacks.onPrint);
+        return statements;
     }
 
     #returnStatement() {
-        const keyword = this.#previous();
-        let returnValue = null;
-        
-        if (this.#consume(TokenType.LEFT_P, 'If you don\'t return anything, usage is RETURN ()')) {
-            if (!this.#check(TokenType.RIGHT_P)) {
-                returnValue = this.#expression();
-            }
-            this.#consume(TokenType.RIGHT_P, 'Missing enclosing )');
-        }
+        this.#consume(TokenType.LEFT_P, 'RETURN needs parentheses: RETURN (value) or RETURN ()');
+        const value = this.#check(TokenType.RIGHT_P) ? null : this.#expression();
+        this.#consume(TokenType.RIGHT_P, 'Missing enclosing )');
 
-        return new ReturnStatement(keyword, returnValue);
-    }
-
-    #windowStatement() {
-        const widthExpression = this.#expression();
-
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-
-        const heightExpression = this.#expression();
-
-        return new WindowStatement(widthExpression, heightExpression);
-    }
-
-    #colorStatement() {
-        const expression = this.#expression();
-        
-        return new ColorStatement(expression);
-    }
-
-    #fillStatement() {
-        const xExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const yExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const widthExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const heightExpression = this.#expression();
-
-        return new FillStatement(xExpression, yExpression, widthExpression, heightExpression);
-    }
-
-    #textStatement() {
-        const xExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const yExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const textExpression = this.#expression();
-
-        return new TextStatement(xExpression, yExpression, textExpression);
-    }
-
-    #sleepStatement() {
-        const sleepExpression = this.#expression();
-
-        return new SleepStatement(sleepExpression);
-    }
-
-    #sizeStatement() {
-        const sizeX = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-
-        const sizeY = this.#expression();
-
-        return new SizeStatement(sizeX, sizeY);
-    }
-
-    #drawStatement() {
-        const xExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const yExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-        
-        const nameExpression = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-
-        const frameExpression = this.#expression();
-
-        return new DrawStatement(xExpression, yExpression, nameExpression, frameExpression);
-    }
-
-    #colorDataStatement() {
-        const char = this.#expression();
-        this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-
-        const color = this.#expression();
-
-        return new ColorDataStatement(char, color);
-    }
-
-    #pixelDataStatement() {
-        const data = this.#expression();
-
-        return new PixelDataStatement(data);
-    }
-
-    #barStatement() {
-        let bar = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            bar = this.#expression();
-        } else {
-            throw new Error('BAR must have a bar: BAR "C4 -- D4"');
-        }
-
-        return new BarStatement(bar);
-    }
-
-    #gainStatement() {
-        let gain = null;
-        if (this.#peek().type == TokenType.NUMBER || this.#peek().type == TokenType.IDENTIFIER) {
-            gain = this.#expression();
-        } else {
-            throw new Error('GAIN must have a number: GAIN 80');
-        }
-
-        return new GainStatement(gain);
-    }
-
-    #bpmStatement() {
-        let bpm = null;
-        if (this.#peek().type == TokenType.NUMBER || this.#peek().type == TokenType.IDENTIFIER) {
-            bpm = this.#expression();
-        } else {
-            throw new Error('BPM must have a number: BPM 120');
-        }
-
-        return new BpmStatement(bpm);
-    }
-
-    #loopStatement() {
-        let loop = this.#expression();
-        return new LoopStatement(loop);
-    }
-
-    #typeStatement() {
-        let waveType = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            waveType = this.#expression();
-        } else {
-            throw new Error('TYPE must have a type: TYPE "sawtooth"');
-        }
-
-        return new TypeStatement(waveType);
-    }
-
-    #playStatement() {
-        let songName = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            songName = this.#expression();
-        } else {
-            throw new Error('PLAY must have a songName: PLAY "song"');
-        }
-
-        return new PlayStatement(songName);
-    }
-
-    #stopStatement() {
-        let songName = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            songName = this.#expression();
-        } else {
-            throw new Error('STOP must have a songName: STOP "song"');
-        }
-
-        return new StopStatement(songName);
+        return new ReturnStatement(value);
     }
 
     #ifStatement() {
-        this.#match(TokenType.LEFT_P);
         const condition = this.#expression();
-        this.#match(TokenType.RIGHT_P);
+        this.#consume(TokenType.THEN, 'Expected THEN after IF condition');
 
-        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'IF' statement`);
-        
-        const ifBranch = [];
-        while (!this.#check(TokenType.END) && !this.#check(TokenType.ELSE) && !this.#isAtEnd()) {
-            ifBranch.push(this.#declaration());
-        }
+        const thenBranch = this.#statementsUntil(TokenType.END, TokenType.ELSE);
+        const elseBranch = this.#match(TokenType.ELSE) ? this.#statementsUntil(TokenType.END) : [];
+        this.#consume(TokenType.END, 'Expected END to close IF');
 
-        const elseBranch = [];
-        if (this.#match(TokenType.ELSE)) {
-            while (!this.#check(TokenType.END) && !this.#isAtEnd()) {
-                elseBranch.push(this.#declaration());
-            }
-        }
-        
-        this.#consume(TokenType.END, `Expected 'END' to end 'IF' statement`);
-
-        return new IfStatement(condition, ifBranch, elseBranch);
+        return new IfStatement(condition, thenBranch, elseBranch);
     }
 
-    #whileBlock() {
-
-        this.#match(TokenType.LEFT_P);
+    #whileStatement() {
         const condition = this.#expression();
-        this.#match(TokenType.RIGHT_P);
+        this.#consume(TokenType.THEN, 'Expected THEN after WHILE condition');
 
-        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'WHILE' block`);
-
-        return new WhileBlock(this.#block(), condition);
+        return new WhileStatement(condition, this.#block('WHILE'));
     }
 
-    #forBlock() {
-        this.#match(TokenType.LEFT_P);
+    /**
+     * FOR (initializer : condition : increment) THEN ... END
+     */
+    #forStatement() {
+        const hasParentheses = this.#match(TokenType.LEFT_P);
+
         const initializer = this.#declaration();
-        
-        this.#consume(TokenType.COLON, `Missing colon: [:]`);
-        
+        this.#consume(TokenType.COLON, 'Missing colon. Usage: FOR (LET I = 0 : I < 10 : I++) THEN');
         const condition = this.#expression();
-        
-        this.#consume(TokenType.COLON, `Missing colon: [:]`);
-        
+        this.#consume(TokenType.COLON, 'Missing colon. Usage: FOR (LET I = 0 : I < 10 : I++) THEN');
         const increment = this.#declaration();
-        this.#match(TokenType.RIGHT_P);
 
-        this.#consume(TokenType.THEN, `Expected 'THEN' to start 'FOR' block`);
-
-        return new ForBlock(this.#block(), initializer, condition, increment);
-    }
-
-    #spriteBlock() {
-        let name = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            name = this.#expression();
-        } else {
-            throw new Error('SPRITE must have a name: SPRITE "exampleSprite"');
+        if (hasParentheses) {
+            this.#consume(TokenType.RIGHT_P, 'Missing enclosing ) in FOR');
         }
+        this.#consume(TokenType.THEN, 'Expected THEN to start FOR block');
 
-        return new SpriteBlock(this.#block(), name);
+        return new ForStatement(initializer, condition, increment, this.#block('FOR'));
     }
 
-    #frameBlock() {
-        let name = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            name = this.#expression();
-        }
+    #frameStatement() {
+        // The name is optional: FRAME "WALK" ... END or just FRAME ... END
+        const hasName = this.#check(TokenType.STRING) || this.#check(TokenType.IDENTIFIER);
+        const name = hasName ? this.#expression() : null;
 
-        return new FrameBlock(this.#block(), name);
-    }
-
-    #songBlock() {
-        let name = null;
-        if (this.#peek().type == TokenType.STRING || this.#peek().type == TokenType.IDENTIFIER) {
-            name = this.#expression();
-        } else {
-            throw new Error('SONG must have a name: SONG "exampleSong"');
-        }
-
-        return new SongBlock(this.#block(), name);
-    }
-
-    #sheetBlock() {
-        return new SheetBlock(this.#block());
+        return new FrameStatement(name, this.#block('FRAME'));
     }
 
     #expression() {
@@ -2678,17 +1982,17 @@ class Parser {
     }
 
     #assignment() {
-        let expression = this.#or();
+        const expression = this.#or();
 
         if (this.#match(TokenType.EQUAL)) {
+            const equals = this.#previous();
             const value = this.#assignment();
 
             if (expression instanceof VariableExpression) {
-                const name = expression.name;
-                return new AssignmentExpression(name, value, expression.index);
+                return new AssignmentExpression(expression, value);
             }
 
-            throw new Error('Invalid assignment target');
+            throw this.#error('Invalid assignment target', equals);
         }
 
         return expression;
@@ -2698,69 +2002,45 @@ class Parser {
         let expression = this.#and();
 
         while (this.#match(TokenType.OR)) {
-            const operator = this.#previous();
-            const right = this.#and();
-            expression = new LogicalExpression(expression, operator, right);
+            expression = new LogicalExpression(expression, this.#previous(), this.#and());
         }
 
         return expression;
     }
 
     #and() {
-        let expression = this.#equality();
+        let expression = this.#binary(0);
 
         while (this.#match(TokenType.AND)) {
-            const operator = this.#previous();
-            const right = this.#equality();
-            expression = new LogicalExpression(expression, operator, right);
+            expression = new LogicalExpression(expression, this.#previous(), this.#binary(0));
         }
 
         return expression;
     }
 
-    #equality() {
-        let expression = this.#comparison();
+    /**
+     * Binary operators, from the lowest precedence to the highest
+     */
+    static #binaryPrecedence = [
+        [TokenType.EQUAL_EQUAL, TokenType.NOT_EQUAL],
+        [TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL],
+        [TokenType.PLUS, TokenType.MINUS],
+        [TokenType.STAR, TokenType.SLASH, TokenType.MOD],
+    ];
 
-        while (this.#match(TokenType.NOT_EQUAL, TokenType.EQUAL_EQUAL)) {
-            const operator = this.#previous();
-            const right = this.#comparison();
-            expression = new BinaryExpression(expression, operator, right);
+    /**
+     * Parses left-associative binary operators of the given precedence level and above
+     * @param {number} level Index into #binaryPrecedence
+     */
+    #binary(level) {
+        if (level === Parser.#binaryPrecedence.length) {
+            return this.#unary();
         }
 
-        return expression;
-    }
+        let expression = this.#binary(level + 1);
 
-    #comparison() {
-        let expression = this.#term();
-
-        while (this.#match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL)) {
-            const operator = this.#previous();
-            const right = this.#term();
-            expression = new BinaryExpression(expression, operator, right);
-        }
-
-        return expression;
-    }
-
-    #term() {
-        let expression = this.#factor();
-
-        while (this.#match(TokenType.MINUS, TokenType.PLUS)) {
-            const operator = this.#previous();
-            const right = this.#factor();
-            expression = new BinaryExpression(expression, operator, right);
-        }
-
-        return expression;
-    }
-
-    #factor() {
-        let expression = this.#unary();
-
-        while (this.#match(TokenType.SLASH, TokenType.STAR, TokenType.MOD)) {
-            const operator = this.#previous();
-            const right = this.#unary();
-            expression = new BinaryExpression(expression, operator, right);
+        while (this.#match(...Parser.#binaryPrecedence[level])) {
+            expression = new BinaryExpression(expression, this.#previous(), this.#binary(level + 1));
         }
 
         return expression;
@@ -2768,61 +2048,67 @@ class Parser {
 
     #unary() {
         if (this.#match(TokenType.NOT, TokenType.MINUS)) {
-            const operator = this.#previous();
-            const right = this.#unary();
-            return new UnaryExpression(operator, right);
+            return new UnaryExpression(this.#previous(), this.#unary());
         }
 
         if (this.#match(TokenType.PLUSPLUS, TokenType.MINUSMINUS)) {
             const operator = this.#previous();
-            const expression = this.#unary();
-            assert(expression instanceof VariableExpression, 'prefix ++ and -- can only be used on variables');
-            return new PrefixExpression(operator, expression);
+            return new UpdateExpression(this.#updateTarget(this.#unary(), operator), operator, true);
         }
 
         return this.#postfix();
     }
 
     #postfix() {
-        let expression = this.#call();
+        const expression = this.#call();
 
         if (this.#match(TokenType.PLUSPLUS, TokenType.MINUSMINUS)) {
             const operator = this.#previous();
-
-            assert(expression instanceof VariableExpression, 'prefix ++ and -- can only be used on variables');
-
-            return new PostfixExpression(expression, operator);
+            return new UpdateExpression(this.#updateTarget(expression, operator), operator, false);
         }
 
         return expression;
     }
-    
+
+    #updateTarget(expression, operator) {
+        if (!(expression instanceof VariableExpression)) {
+            throw this.#error(`${operator.lexeme} can only be used on variables and array elements`, operator);
+        }
+
+        return expression;
+    }
+
     #call() {
         let expression = this.#primary();
 
-        while (true) {
-            if (this.#match(TokenType.LEFT_P)) {
-                expression = this.#finishCall(expression);
-            } else {
-                break;
-            }
+        while (this.#match(TokenType.LEFT_P)) {
+            const paren = this.#previous();
+            expression = new CallExpression(expression, paren, this.#arguments());
         }
 
         return expression;
     }
 
+    /**
+     * Parses a comma-separated argument list after the opening (, including the closing )
+     */
+    #arguments() {
+        const args = [];
+
+        if (!this.#check(TokenType.RIGHT_P)) {
+            do {
+                args.push(this.#expression());
+            } while (this.#match(TokenType.COMMA));
+        }
+
+        this.#consume(TokenType.RIGHT_P, 'Expected ) after arguments');
+        return args;
+    }
+
     #primary() {
-        if (this.#match(TokenType.FALSE)) {
-            return new LiteralExpression(false);
-        }
-        
-        if (this.#match(TokenType.TRUE)) {
-            return new LiteralExpression(true);
-        } 
-        
-        if (this.#match(TokenType.NULL)) {
-            return new LiteralExpression(null);
-        }
+        if (this.#match(TokenType.FALSE)) return new LiteralExpression(false);
+        if (this.#match(TokenType.TRUE)) return new LiteralExpression(true);
+        if (this.#match(TokenType.NULL)) return new LiteralExpression(null);
 
         if (this.#match(TokenType.STRING, TokenType.NUMBER)) {
             return new LiteralExpression(this.#previous().literal);
@@ -2836,144 +2122,37 @@ class Parser {
                 this.#consume(TokenType.RIGHT_B, 'Missing bracket ]');
                 return new VariableExpression(name, index);
             }
+
             return new VariableExpression(name);
         }
 
         if (this.#match(TokenType.LEFT_P)) {
-            let expression = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new GroupingExpression(expression);
+            const expression = this.#expression();
+            this.#consume(TokenType.RIGHT_P, 'Missing enclosing parenthesis');
+            return expression;
         }
 
-        if (this.#match(TokenType.RANDOM)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new RandomExpression();
+        const keyword = this.#peek();
+
+        if (BUILTIN_VALUES.has(keyword.type)) {
+            this.#advance();
+            return new BuiltinCallExpression(keyword, BUILTIN_VALUES.get(keyword.type), []);
         }
 
-        if (this.#match(TokenType.INPUT)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const key = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new InputExpression(key);
+        if (BUILTINS.has(keyword.type)) {
+            this.#advance();
+            const builtin = BUILTINS.get(keyword.type);
+
+            this.#consume(TokenType.LEFT_P, `Expected ( after ${keyword.lexeme}`);
+            const args = this.#arguments();
+            if (args.length !== builtin.arity) {
+                throw this.#error(`${keyword.lexeme} expects ${builtin.arity} argument(s) but got ${args.length}`, keyword);
+            }
+
+            return new BuiltinCallExpression(keyword, builtin, args);
         }
 
-        if (this.#match(TokenType.INT)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const number = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new IntExpression(number);
-        }
-
-        if (this.#match(TokenType.MIN)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const value1 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`)
-            const value2 = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new MinExpression(value1, value2);
-        }
-
-        if (this.#match(TokenType.MAX)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const value1 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const value2 = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new MaxExpression(value1, value2);
-        }
-
-        if (this.#match(TokenType.ABS)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const number = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new AbsoluteExpression(number);
-        }
-
-        if (this.#match(TokenType.FLOOR)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const number = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new FloorExpression(number);
-        }
-
-        if (this.#match(TokenType.CEIL)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const number = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new CeilExpression(number);
-        }
-
-        if (this.#match(TokenType.LERP)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const a = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const b = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const t = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new LerpExpression(a, b, t);
-        }
-
-        if (this.#match(TokenType.MOUSEX)) {
-            return new MouseXExpression();
-        }
-
-        if (this.#match(TokenType.MOUSEY)) {
-            return new MouseYExpression();
-        }
-
-        if (this.#match(TokenType.SQRT)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const number = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new SqrtExpression(number);
-        }
-
-        if (this.#match(TokenType.SUM)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const identifier = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new SumExpression(identifier);
-        }
-
-        if (this.#match(TokenType.COLLIDE)) {
-            this.#consume(TokenType.LEFT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            const x1 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const y1 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const w1 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const h1 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const x2 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const y2 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const w2 = this.#expression();
-            this.#consume(TokenType.COMMA, `[Line ${this.#peek().line}]: Missing comma`);
-            const h2 = this.#expression();
-            this.#consume(TokenType.RIGHT_P, `[Line ${this.#peek().line}]: Missing enclosing parenthesis`);
-            return new CollideExpression(x1, y1, w1, h1, x2, y2, w2, h2);
-        }
-
-        throw new SyntaxError(`[Line ${this.#peek().line}]: Missing expression`);
-    }
-
-    #finishCall(callee) {
-        const args = [];
-
-        if (!this.#check(TokenType.RIGHT_P)) {
-            do { 
-                assert(args.length < 255, 'Can\'t have more than 255 arguments');
-                args.push(this.#expression());
-            } while (this.#match(TokenType.COMMA));
-        }
-
-        const paren = this.#consume(TokenType.RIGHT_P, 'Expect ) after arguments.');
-
-        return new CallExpression(callee, paren, args);
+        throw this.#error(keyword.type === TokenType.EOF ? 'Unexpected end of program' : `Unexpected '${keyword.lexeme}'`);
     }
 
     #match(...types) {
@@ -2988,11 +2167,7 @@ class Parser {
     }
 
     #check(type) {
-        if (this.#isAtEnd()) {
-            return false;
-        }
-
-        return this.#peek().type == type;
+        return this.#peek().type === type;
     }
 
     #advance() {
@@ -3004,16 +2179,11 @@ class Parser {
     }
 
     #isAtEnd() {
-        return this.#peek().type == TokenType.EOF;
+        return this.#peek().type === TokenType.EOF;
     }
 
     #peek() {
         return this.#tokens[this.#current];
-    }
-
-    #peekNext() {
-        if (this.#isAtEnd()) return null;
-        return this.#tokens[this.#current + 1];
     }
 
     #previous() {
@@ -3025,195 +2195,105 @@ class Parser {
             return this.#advance();
         }
 
-        throw new SyntaxError(`${this.#peek().line}: ${errorMessage}`);
+        throw this.#error(errorMessage);
+    }
+
+    #error(message, token = this.#peek()) {
+        // At the end of the program, point at the last real token instead of the trailing newlines
+        if (token.type === TokenType.EOF && this.#current > 0) {
+            token = this.#previous();
+        }
+
+        return new OneShotError(message, token.line);
     }
 }
 
-class Environment {
 
-    #enclosing;
-
-    // primitives
-    #values = new Map();
-
-    // sprites
-    #sprites = new Map();
-    #currentSpriteName = '';
-
-    get currentSprite() {
-        if (this.#sprites.has(this.#currentSpriteName)) {
-            return this.#sprites.get(this.#currentSpriteName);
-        }
-
-        if (this.#enclosing != null) {
-            return this.#enclosing.currentSprite;
-        }
-    }
-
-    // songs
-    #songs = new Map();
-    #currentSongName = '';
-
-    get currentSong() {
-        if (this.#songs.has(this.#currentSongName)) {
-            return this.#songs.get(this.#currentSongName);
-        }
-
-        if (this.#enclosing != null) {
-            return this.#enclosing.currentSong;
-        }
-    }
-
-    /**
-     * @param {Environment} enclosing 
-     */
-    constructor(enclosing) {
-        if (enclosing) {
-            this.#enclosing = enclosing;
-        } else {
-            this.#enclosing = null;
-        }
-    }
-
-    define(name, value) {
-        this.#values.set(name, value);
-    }
-
-    /**
-     * @param {Token} name 
-     */
-    get(name) {
-        if (this.#values.has(name.lexeme)) {
-            return this.#values.get(name.lexeme);
-        }
-
-        if (this.#enclosing != null) {
-            return this.#enclosing.get(name);
-        }
-
-        throw new Error(`Undefined variable: ${name.lexeme}`);
-    }
-
-    /**
-     * @param {Token} name 
-     * @param {*} value 
-     */
-    assign(name, value) {
-        if (this.#values.has(name.lexeme)) {
-            this.#values.set(name.lexeme, value);
-            return;
-        }
-
-        if (this.#enclosing != null) {
-            this.#enclosing.assign(name, value);
-            return;
-        }
-
-        throw new Error(`Undefined variable: ${name.lexeme}`);
-    }
-
-    addNewSprite(name) {
-        this.#currentSpriteName = name;
-        this.#sprites.set(name, new Sprite());
-    }
-
-    getSprite(name) {
-        if (this.#sprites.has(name)) {
-            return this.#sprites.get(name);
-        }
-
-        if (this.#enclosing != null) {
-            return this.#enclosing.getSprite(name);
-        }
-
-        throw new Error(`Undefined sprite: ${name}`);
-    }
-
-    resetSprite() {
-        this.#currentSpriteName = '';
-    }
-
-    addNewSong(name) {
-        this.#currentSongName = name;
-        this.#songs.set(name, new Song(audioContext));
-    }
-
-    getSong(name) {
-        if (this.#songs.has(name)) {
-            return this.#songs.get(name);
-        }
-
-        if (this.#enclosing != null) {
-            return this.#enclosing.getSong(name);
-        }
-
-        throw new Error(`Undefined song: ${name}`);
-    }
-
-    resetSong() {
-        this.#currentSongName = '';
-    }
-}
-
-class Interpreter {
-
-    #envrionment = new Environment();
-
-    /**
-     * @param {Statement[]} statements 
-     */
-    async interpret(statements) {
-        for (const statement of statements) {
-            await statement.interpret(this.#envrionment);
-        }
-    }
-}
+/* ==========================================================================
+ * OneShot: the public API
+ * ======================================================================= */
 
 class OneShot {
 
     /**
-     * @type {Scanner}
+     * @type {HTMLCanvasElement?}
      */
-    #scanner;
+    #canvas = null;
 
     /**
-     * @type {Parser}
+     * Runtime of the program that is currently running
+     * @type {Runtime?}
      */
-    #parser;
+    #runtime = null;
 
     /**
-     * @type {Interpreter}
+     * @param {string} [canvasId] Id of the canvas to draw on. Without it, WINDOW creates a canvas.
      */
-    #interpreter;
-
     constructor(canvasId) {
-        canvas = document.getElementById(canvasId);
+        if (canvasId) {
+            this.#canvas = document.getElementById(canvasId);
+        }
     }
 
     onPrint = (message) => {
         console.log(message);
     }
 
-    async run(source) {
-        running = true;
-
-        this.#scanner = new Scanner(source);
-        const tokens = this.#scanner.scanTokens();
-    
-        this.#parser = new Parser(tokens, { onPrint: this.onPrint });
-        const statements = this.#parser.parse();
-
-        this.#interpreter = new Interpreter();
-        await this.#interpreter.interpret(statements);
-
-        this.stop();
+    /**
+     * @param {Error} error
+     */
+    onError = (error) => {
+        console.error(OneShot.formatError(error));
     }
 
-    stop() {
-        running = false;
+    /**
+     * @param {Error} error
+     */
+    static formatError(error) {
+        return error.line !== undefined ? `[Line ${error.line}] ${error.message}` : error.message;
+    }
 
-        if (canvas && ctx) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+    /**
+     * Runs a program, stopping the one that is already running. Errors are reported to `onError`.
+     * @param {string} source
+     */
+    async run(source) {
+        this.stop();
+
+        const runtime = new Runtime(this.#canvas, message => this.onPrint(message));
+        this.#runtime = runtime;
+        input.canvas = this.#canvas;
+        input.capturing = true;
+
+        try {
+            const tokens = new Scanner(source).scanTokens();
+            const statements = new Parser(tokens).parse();
+            await executeStatements(statements, runtime.globals);
+        } catch (error) {
+            if (!(error instanceof StopSignal)) {
+                this.onError(error);
+            }
+        } finally {
+            // WINDOW may have created a canvas, reuse it next time
+            this.#canvas = runtime.canvas;
+
+            if (this.#runtime === runtime) {
+                this.#runtime = null;
+                input.capturing = false;
+            }
+        }
+    }
+
+    /**
+     * Stops the running program and its songs, and clears the screen.
+     */
+    stop() {
+        this.#runtime?.stop();
+        this.#runtime = null;
+
+        const canvas = this.#canvas;
+        if (canvas) {
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
         }
     }
 }

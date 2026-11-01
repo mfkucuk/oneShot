@@ -1,0 +1,40 @@
+# The Collatz conjecture: halve even numbers, turn odd numbers into 3N + 1.
+# Every starting number seems to reach 1 eventually, but nobody has proven it.
+FUNC STEPS(N) THEN
+    LET COUNT = 0
+    WHILE (N <> 1) THEN
+        IF (N % 2 == 0) THEN
+            N = N / 2
+        ELSE
+            N = 3 * N + 1
+        END
+        COUNT++
+    END
+    RETURN (COUNT)
+END
+
+# Show the path of a single number
+LET N = 27
+LET PATH = "" + N
+WHILE (N <> 1) THEN
+    IF (N % 2 == 0) THEN
+        N = N / 2
+    ELSE
+        N = 3 * N + 1
+    END
+    PATH = PATH + " " + N
+END
+PRINT "PATH OF 27: " + PATH
+PRINT "27 TAKES " + STEPS(27) + " STEPS"
+
+# Which starting number below 1000 takes the longest?
+LET BEST = 1
+LET BESTSTEPS = 0
+FOR (LET I = 1 : I < 1000 : I++) THEN
+    LET S = STEPS(I)
+    IF (S > BESTSTEPS) THEN
+        BEST = I
+        BESTSTEPS = S
+    END
+END
+PRINT "BELOW 1000, " + BEST + " TAKES THE LONGEST: " + BESTSTEPS + " STEPS"

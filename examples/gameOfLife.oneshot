@@ -1,0 +1,106 @@
+# Conway's Game of Life on a grid that wraps around the edges.
+#   A live cell with 2 or 3 live neighbours survives.
+#   A dead cell with exactly 3 live neighbours comes alive.
+# SPACE pauses, R makes a new random grid, G drops a glider.
+LET CELL = 8
+LET COLS = 40
+LET ROWS = 30
+WINDOW COLS * CELL, ROWS * CELL
+
+# Cells are 1 (alive) or 0 (dead). A 2D grid is stored in a 1D array as ROW * COLS + COLUMN
+LET CELLS[COLS * ROWS]
+LET NEXTCELLS[COLS * ROWS]
+
+FUNC RANDOMIZE() THEN
+    FOR (LET I = 0 : I < COLS * ROWS : I++) THEN
+        IF (RANDOM() < 0.3) THEN
+            CELLS[I] = 1
+        ELSE
+            CELLS[I] = 0
+        END
+    END
+END
+
+FUNC GLIDER() THEN
+    LET LEFT = FLOOR(RANDOM() * (COLS - 3))
+    LET TOP = FLOOR(RANDOM() * (ROWS - 3))
+    CELLS[TOP * COLS + LEFT + 1] = 1
+    CELLS[(TOP + 1) * COLS + LEFT + 2] = 1
+    CELLS[(TOP + 2) * COLS + LEFT] = 1
+    CELLS[(TOP + 2) * COLS + LEFT + 1] = 1
+    CELLS[(TOP + 2) * COLS + LEFT + 2] = 1
+END
+
+FUNC STEP() THEN
+    FOR (LET ROW = 0 : ROW < ROWS : ROW++) THEN
+        LET UP = ((ROW + ROWS - 1) % ROWS) * COLS
+        LET MIDDLE = ROW * COLS
+        LET DOWN = ((ROW + 1) % ROWS) * COLS
+
+        FOR (LET COLUMN = 0 : COLUMN < COLS : COLUMN++) THEN
+            LET LEFT = (COLUMN + COLS - 1) % COLS
+            LET RIGHT = (COLUMN + 1) % COLS
+
+            LET NEIGHBOURS = CELLS[UP + LEFT] + CELLS[UP + COLUMN] + CELLS[UP + RIGHT]
+                + CELLS[MIDDLE + LEFT] + CELLS[MIDDLE + RIGHT]
+                + CELLS[DOWN + LEFT] + CELLS[DOWN + COLUMN] + CELLS[DOWN + RIGHT]
+
+            IF (NEIGHBOURS == 3 OR (NEIGHBOURS == 2 AND CELLS[MIDDLE + COLUMN] == 1)) THEN
+                NEXTCELLS[MIDDLE + COLUMN] = 1
+            ELSE
+                NEXTCELLS[MIDDLE + COLUMN] = 0
+            END
+        END
+    END
+
+    # Arrays are references, so swapping them is instant
+    LET OLD = CELLS
+    CELLS = NEXTCELLS
+    NEXTCELLS = OLD
+END
+
+FUNC DRAWCELLS() THEN
+    COLOR "#0E1116"
+    FILL ALL
+
+    COLOR "#7EE787"
+    FOR (LET I = 0 : I < COLS * ROWS : I++) THEN
+        IF (CELLS[I] == 1) THEN
+            FILL (I % COLS) * CELL, FLOOR(I / COLS) * CELL, CELL - 1, CELL - 1
+        END
+    END
+END
+
+RANDOMIZE()
+LET PAUSED = FALSE
+LET GENERATION = 0
+LET KEYWASDOWN = FALSE
+
+WHILE (TRUE) THEN
+    # React to a key once per press, not on every frame it is held
+    LET KEYDOWN = INPUT(" ") OR INPUT("R") OR INPUT("G")
+    IF (KEYDOWN AND !KEYWASDOWN) THEN
+        IF (INPUT(" ")) THEN
+            PAUSED = !PAUSED
+        END
+        IF (INPUT("R")) THEN
+            RANDOMIZE()
+            GENERATION = 0
+        END
+        IF (INPUT("G")) THEN
+            GLIDER()
+        END
+    END
+    KEYWASDOWN = KEYDOWN
+
+    IF (!PAUSED) THEN
+        STEP()
+        GENERATION++
+    END
+
+    DRAWCELLS()
+    COLOR "WHITE"
+    TEXT 6, 20, "GEN " + GENERATION
+
+    SLEEP 1000 / 20
+END

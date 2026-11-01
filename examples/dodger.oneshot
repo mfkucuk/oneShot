@@ -1,0 +1,165 @@
+# Dodger: dodge the falling rocks for as long as you can.
+# Move with A / D or the arrow keys. Press R to play again.
+
+SPRITE "SHIP"
+    SIZE 7, 6
+
+    # Two frames without names. They are drawn by index to make the flame flicker
+    FRAME
+        COLORDATA "W", "#E8E8E8"
+        COLORDATA "B", "#4FC3F7"
+        COLORDATA "F", "#FF7043"
+        PIXELDATA "   W   "
+        PIXELDATA "  WBW  "
+        PIXELDATA " WWBWW "
+        PIXELDATA "WWWWWWW"
+        PIXELDATA "W  W  W"
+        PIXELDATA "  F F  "
+    END
+    FRAME
+        COLORDATA "W", "#E8E8E8"
+        COLORDATA "B", "#4FC3F7"
+        COLORDATA "F", "#FFD54F"
+        PIXELDATA "   W   "
+        PIXELDATA "  WBW  "
+        PIXELDATA " WWBWW "
+        PIXELDATA "WWWWWWW"
+        PIXELDATA "W  W  W"
+        PIXELDATA " F   F "
+    END
+END
+
+SPRITE "ROCK"
+    SIZE 5, 5
+    FRAME
+        COLORDATA "G", "#8D6E63"
+        COLORDATA "D", "#5D4037"
+        PIXELDATA " GGG "
+        PIXELDATA "GGDGG"
+        PIXELDATA "GDGGG"
+        PIXELDATA "GGGDG"
+        PIXELDATA " GGG "
+    END
+END
+
+SONG "BOOM"
+    BPM 400
+    SHEET
+        TYPE "sawtooth"
+        GAIN 20
+        BAR "A2 E2 C2 A1"
+    END
+END
+
+WINDOW 320, 240
+
+# The ship is 7 x 6 characters, so 28 x 24 pixels. Rocks are 20 x 20.
+LET SHIPX = 146
+LET SHIPY = 206
+LET SHIPSPEED = 3.5
+
+LET ROCKCOUNT = 12
+LET ROCKX[ROCKCOUNT]
+LET ROCKY[ROCKCOUNT]
+LET ROCKSPEED[ROCKCOUNT]
+
+LET STARCOUNT = 40
+LET STARX[STARCOUNT]
+LET STARY[STARCOUNT]
+FOR (LET I = 0 : I < STARCOUNT : I++) THEN
+    STARX[I] = RANDOM() * 320
+    STARY[I] = RANDOM() * 240
+END
+
+LET TIME = 0
+LET SCORE = 0
+LET BEST = 0
+LET ALIVE = TRUE
+
+FUNC RESETROCK(I) THEN
+    ROCKX[I] = RANDOM() * 300
+    ROCKY[I] = -20 - RANDOM() * 240
+    ROCKSPEED[I] = 1.5 + RANDOM() * 1.5 + SCORE / 400
+END
+
+FUNC RESET() THEN
+    SHIPX = 146
+    SCORE = 0
+    ALIVE = TRUE
+    FOR (LET I = 0 : I < ROCKCOUNT : I++) THEN
+        RESETROCK(I)
+    END
+END
+
+FUNC UPDATE() THEN
+    IF (INPUT("A") OR INPUT("ARROWLEFT")) THEN
+        SHIPX = SHIPX - SHIPSPEED
+    END
+    IF (INPUT("D") OR INPUT("ARROWRIGHT")) THEN
+        SHIPX = SHIPX + SHIPSPEED
+    END
+    SHIPX = MAX(0, MIN(SHIPX, 320 - 28))
+
+    # More rocks join in as the score goes up
+    LET ACTIVE = MIN(ROCKCOUNT, 4 + FLOOR(SCORE / 150))
+    FOR (LET I = 0 : I < ACTIVE : I++) THEN
+        ROCKY[I] = ROCKY[I] + ROCKSPEED[I]
+        IF (ROCKY[I] > 240) THEN
+            RESETROCK(I)
+        END
+
+        IF (COLLIDE(SHIPX + 4, SHIPY + 2, 20, 18, ROCKX[I] + 2, ROCKY[I] + 2, 16, 16)) THEN
+            ALIVE = FALSE
+            BEST = MAX(BEST, SCORE)
+            PLAY "BOOM"
+        END
+    END
+
+    SCORE++
+END
+
+FUNC DRAWGAME() THEN
+    COLOR "#0D0D1A"
+    FILL ALL
+
+    COLOR "#555577"
+    FOR (LET I = 0 : I < STARCOUNT : I++) THEN
+        STARY[I] = (STARY[I] + 0.5) % 240
+        FILL STARX[I], STARY[I], 2, 2
+    END
+
+    FOR (LET I = 0 : I < ROCKCOUNT : I++) THEN
+        IF (ROCKY[I] > -20) THEN
+            DRAW ROCKX[I], ROCKY[I], "ROCK", 0
+        END
+    END
+
+    IF (ALIVE) THEN
+        DRAW SHIPX, SHIPY, "SHIP", FLOOR(TIME / 4) % 2
+    END
+
+    COLOR "WHITE"
+    TEXT 6, 20, "SCORE " + FLOOR(SCORE / 10)
+    TEXT 200, 20, "BEST " + FLOOR(BEST / 10)
+
+    IF (!ALIVE) THEN
+        TEXT 106, 110, "GAME OVER"
+        TEXT 52, 140, "PRESS R TO RESTART"
+    END
+END
+
+RESET()
+
+WHILE (TRUE) THEN
+    IF (ALIVE) THEN
+        UPDATE()
+    ELSE
+        IF (INPUT("R")) THEN
+            RESET()
+        END
+    END
+
+    DRAWGAME()
+    TIME++
+    SLEEP 1000 / 60
+END

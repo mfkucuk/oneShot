@@ -1,16 +1,22 @@
+# A number is prime if it is at least 2 and has no divisor between 2 and its square root
 FUNC CHECKPRIME(N) THEN
-    FOR (LET I = 2 : I < SQRT(N) : I = I + 1) THEN
+    IF (N < 2) THEN
+        RETURN (FALSE)
+    END
+
+    FOR (LET I = 2 : I <= SQRT(N) : I = I + 1) THEN
         IF (N % I == 0) THEN
-            RETURN ( FALSE )
+            RETURN (FALSE)
         END
     END
 
-    RETURN ( TRUE )
+    RETURN (TRUE)
 END
 
-LET N = 7
-IF (CHECKPRIME(N)) THEN
-    PRINT N + " IS PRIME"
-ELSE 
-    PRINT N + " IS NOT PRIME"
+FOR (LET N = 0 : N <= 20 : N++) THEN
+    IF (CHECKPRIME(N)) THEN
+        PRINT N + " IS PRIME"
+    ELSE
+        PRINT N + " IS NOT PRIME"
+    END
 END

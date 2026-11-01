@@ -1,0 +1,26 @@
+# Towers of Hanoi: move every disk from peg A to peg C,
+# one disk at a time, never putting a larger disk on a smaller one.
+LET MOVES = 0
+
+FUNC HANOI(DISKS, FROM, TO, SPARE, VERBOSE) THEN
+    IF (DISKS == 0) THEN
+        RETURN ()
+    END
+
+    # Move the disks above out of the way, move the bottom disk, then put them back on top
+    HANOI(DISKS - 1, FROM, SPARE, TO, VERBOSE)
+    MOVES++
+    IF (VERBOSE) THEN
+        PRINT "MOVE DISK " + DISKS + " FROM " + FROM + " TO " + TO
+    END
+    HANOI(DISKS - 1, SPARE, TO, FROM, VERBOSE)
+END
+
+HANOI(3, "A", "C", "B", TRUE)
+PRINT "3 DISKS: " + MOVES + " MOVES"
+
+FOR (LET DISKS = 4 : DISKS <= 10 : DISKS++) THEN
+    MOVES = 0
+    HANOI(DISKS, "A", "C", "B", FALSE)
+    PRINT DISKS + " DISKS: " + MOVES + " MOVES"
+END

@@ -1,0 +1,24 @@
+# The sieve of Eratosthenes finds every prime up to a limit by
+# crossing out the multiples of each prime it finds.
+LET LIMIT = 100
+LET CROSSED[LIMIT + 1]
+
+FOR (LET I = 2 : I * I <= LIMIT : I++) THEN
+    IF (!CROSSED[I]) THEN
+        FOR (LET J = I * I : J <= LIMIT : J = J + I) THEN
+            CROSSED[J] = TRUE
+        END
+    END
+END
+
+LET LINE = ""
+LET FOUND = 0
+FOR (LET I = 2 : I <= LIMIT : I++) THEN
+    IF (!CROSSED[I]) THEN
+        LINE = LINE + I + " "
+        FOUND++
+    END
+END
+
+PRINT LINE
+PRINT FOUND + " PRIMES UP TO " + LIMIT

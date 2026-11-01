@@ -1,0 +1,156 @@
+# Snake: eat the red food to grow, and don't hit the walls or yourself.
+# Steer with the arrow keys or WASD. Press R to restart.
+LET CELL = 16
+LET COLS = 20
+LET ROWS = 15
+WINDOW COLS * CELL, ROWS * CELL
+
+# The snake's body, head first
+LET MAXLENGTH = COLS * ROWS
+LET SNAKEX[MAXLENGTH]
+LET SNAKEY[MAXLENGTH]
+LET LENGTH = 0
+
+# The direction the snake moved last, and the direction it will move next
+LET DIRX = 1
+LET DIRY = 0
+LET NEXTDIRX = 1
+LET NEXTDIRY = 0
+
+LET FOODX = 0
+LET FOODY = 0
+LET SCORE = 0
+LET BEST = 0
+LET ALIVE = TRUE
+LET TICK = 0
+
+FUNC ONSNAKE(X, Y) THEN
+    FOR (LET I = 0 : I < LENGTH : I++) THEN
+        IF (SNAKEX[I] == X AND SNAKEY[I] == Y) THEN
+            RETURN (TRUE)
+        END
+    END
+    RETURN (FALSE)
+END
+
+FUNC PLACEFOOD() THEN
+    FOODX = FLOOR(RANDOM() * COLS)
+    FOODY = FLOOR(RANDOM() * ROWS)
+    WHILE (ONSNAKE(FOODX, FOODY)) THEN
+        FOODX = FLOOR(RANDOM() * COLS)
+        FOODY = FLOOR(RANDOM() * ROWS)
+    END
+END
+
+FUNC RESET() THEN
+    LENGTH = 3
+    FOR (LET I = 0 : I < LENGTH : I++) THEN
+        SNAKEX[I] = 5 - I
+        SNAKEY[I] = 7
+    END
+    DIRX = 1
+    DIRY = 0
+    NEXTDIRX = 1
+    NEXTDIRY = 0
+    SCORE = 0
+    ALIVE = TRUE
+    PLACEFOOD()
+END
+
+# The snake can turn, but it can't reverse into itself
+FUNC HANDLEINPUT() THEN
+    IF ((INPUT("ARROWUP") OR INPUT("W")) AND DIRY == 0) THEN
+        NEXTDIRX = 0
+        NEXTDIRY = -1
+    END
+    IF ((INPUT("ARROWDOWN") OR INPUT("S")) AND DIRY == 0) THEN
+        NEXTDIRX = 0
+        NEXTDIRY = 1
+    END
+    IF ((INPUT("ARROWLEFT") OR INPUT("A")) AND DIRX == 0) THEN
+        NEXTDIRX = -1
+        NEXTDIRY = 0
+    END
+    IF ((INPUT("ARROWRIGHT") OR INPUT("D")) AND DIRX == 0) THEN
+        NEXTDIRX = 1
+        NEXTDIRY = 0
+    END
+END
+
+FUNC STEP() THEN
+    DIRX = NEXTDIRX
+    DIRY = NEXTDIRY
+    LET HEADX = SNAKEX[0] + DIRX
+    LET HEADY = SNAKEY[0] + DIRY
+
+    IF (HEADX < 0 OR HEADX >= COLS OR HEADY < 0 OR HEADY >= ROWS OR ONSNAKE(HEADX, HEADY)) THEN
+        ALIVE = FALSE
+        BEST = MAX(BEST, SCORE)
+        RETURN ()
+    END
+
+    LET ATE = HEADX == FOODX AND HEADY == FOODY
+    IF (ATE AND LENGTH < MAXLENGTH) THEN
+        LENGTH++
+    END
+
+    # Every body part moves to where the part in front of it was
+    FOR (LET I = LENGTH - 1 : I > 0 : I--) THEN
+        SNAKEX[I] = SNAKEX[I - 1]
+        SNAKEY[I] = SNAKEY[I - 1]
+    END
+    SNAKEX[0] = HEADX
+    SNAKEY[0] = HEADY
+
+    IF (ATE) THEN
+        SCORE++
+        PLACEFOOD()
+    END
+END
+
+FUNC DRAWGAME() THEN
+    COLOR "#1B1B2F"
+    FILL ALL
+
+    COLOR "#E94560"
+    FILL FOODX * CELL + 3, FOODY * CELL + 3, CELL - 6, CELL - 6
+
+    FOR (LET I = 0 : I < LENGTH : I++) THEN
+        IF (I == 0) THEN
+            COLOR "#B6F09C"
+        ELSE
+            COLOR "#4CAF50"
+        END
+        FILL SNAKEX[I] * CELL + 1, SNAKEY[I] * CELL + 1, CELL - 2, CELL - 2
+    END
+
+    COLOR "WHITE"
+    TEXT 6, 22, "SCORE " + SCORE + "  BEST " + BEST
+
+    IF (!ALIVE) THEN
+        TEXT 106, 110, "GAME OVER"
+        TEXT 52, 140, "PRESS R TO RESTART"
+    END
+END
+
+RESET()
+
+WHILE (TRUE) THEN
+    HANDLEINPUT()
+
+    IF (ALIVE) THEN
+        # The snake gets faster as it grows
+        TICK++
+        IF (TICK >= MAX(3, 9 - FLOOR(SCORE / 4))) THEN
+            TICK = 0
+            STEP()
+        END
+    ELSE
+        IF (INPUT("R")) THEN
+            RESET()
+        END
+    END
+
+    DRAWGAME()
+    SLEEP 1000 / 60
+END

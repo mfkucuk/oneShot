@@ -1,0 +1,71 @@
+# Functions: parameters, return values, recursion and closures
+
+# A function with parameters and a return value
+FUNC AREA(WIDTH, HEIGHT) THEN
+    RETURN (WIDTH * HEIGHT)
+END
+PRINT "AREA OF 6 X 7 IS " + AREA(6, 7)
+
+# A function without a return value returns NULL
+FUNC GREET(NAME) THEN
+    PRINT "HI " + NAME + "!"
+END
+GREET("ADA")
+
+# RETURN () leaves a function early
+FUNC SIGN(N) THEN
+    IF (N > 0) THEN
+        RETURN ("POSITIVE")
+    END
+    IF (N < 0) THEN
+        RETURN ("NEGATIVE")
+    END
+    RETURN ("ZERO")
+END
+PRINT "-5 IS " + SIGN(-5) + ", 0 IS " + SIGN(0) + ", 3 IS " + SIGN(3)
+
+# Recursion: a function can call itself
+FUNC FACTORIAL(N) THEN
+    IF (N <= 1) THEN
+        RETURN (1)
+    END
+    RETURN (N * FACTORIAL(N - 1))
+END
+PRINT "10! = " + FACTORIAL(10)
+
+# Functions can change global variables
+LET CALLS = 0
+FUNC COUNTCALL() THEN
+    CALLS++
+END
+COUNTCALL()
+COUNTCALL()
+PRINT "COUNTCALL WAS CALLED " + CALLS + " TIMES"
+
+# Functions are values: they can be passed to other functions
+FUNC DOUBLE(X) THEN
+    RETURN (X * 2)
+END
+
+FUNC APPLYTWICE(F, X) THEN
+    RETURN (F(F(X)))
+END
+PRINT "DOUBLE TWICE OF 5 IS " + APPLYTWICE(DOUBLE, 5)
+
+# Closures: a function remembers the variables around it, even after
+# the function that created it has returned
+FUNC MAKECOUNTER(STEP) THEN
+    LET COUNT = 0
+    FUNC NEXTVALUE() THEN
+        COUNT = COUNT + STEP
+        RETURN (COUNT)
+    END
+    RETURN (NEXTVALUE)
+END
+
+LET BYONE = MAKECOUNTER(1)
+LET BYTEN = MAKECOUNTER(10)
+BYONE()
+BYONE()
+BYTEN()
+PRINT "BYONE IS AT " + BYONE() + ", BYTEN IS AT " + BYTEN()

@@ -1,0 +1,19 @@
+# FizzBuzz: multiples of 3 say FIZZ, multiples of 5 say BUZZ,
+# multiples of both say FIZZBUZZ and every other number says itself.
+FOR (LET I = 1 : I <= 30 : I++) THEN
+    LET WORD = ""
+
+    IF (I % 3 == 0) THEN
+        WORD = WORD + "FIZZ"
+    END
+
+    IF (I % 5 == 0) THEN
+        WORD = WORD + "BUZZ"
+    END
+
+    IF (WORD == "") THEN
+        PRINT I
+    ELSE
+        PRINT WORD
+    END
+END

@@ -1,0 +1,106 @@
+# Music: a SONG is made of SHEETs that play at the same time.
+# Each BAR is a list of notes like C4, F#4 or Bb3. Every note lasts one beat,
+# "--" is a rest and ".." holds the previous note for one more beat.
+#   BPM sets the speed, LOOP repeats the song,
+#   TYPE picks the sound (sine, square, sawtooth, triangle) and GAIN the volume (0 - 100).
+#
+# P plays the song, S stops it and SPACE plays a sound effect.
+# (This melody is the Russian folk song Korobeiniki.)
+
+SONG "THEME"
+    BPM 300
+    LOOP TRUE
+
+    # Melody
+    SHEET
+        TYPE "square"
+        GAIN 12
+        BAR "E5 .. B4 C5 D5 .. C5 B4"
+        BAR "A4 .. A4 C5 E5 .. D5 C5"
+        BAR "B4 .. .. C5 D5 .. E5 .."
+        BAR "C5 .. A4 .. A4 .. -- --"
+        BAR "-- D5 .. F5 A5 .. G5 F5"
+        BAR "E5 .. .. C5 E5 .. D5 C5"
+        BAR "B4 .. B4 C5 D5 .. E5 .."
+        BAR "C5 .. A4 .. A4 .. -- --"
+    END
+
+    # Bass
+    SHEET
+        TYPE "triangle"
+        GAIN 40
+        BAR "E2 E3 E2 E3 E2 E3 E2 E3"
+        BAR "A2 A3 A2 A3 A2 A3 A2 A3"
+        BAR "G#2 G#3 G#2 G#3 E2 E3 E2 E3"
+        BAR "A2 A3 A2 A3 A2 A3 B2 C3"
+        BAR "D3 D2 D3 D2 D3 D2 D3 D2"
+        BAR "C3 C2 C3 C2 C3 C2 C3 C2"
+        BAR "B2 B1 B2 B1 E2 E3 E2 E3"
+        BAR "A2 A3 A2 A3 A2 A3 -- --"
+    END
+END
+
+# Short songs make good sound effects
+SONG "COIN"
+    BPM 900
+    SHEET
+        TYPE "square"
+        GAIN 15
+        BAR "B5 E6 .. .."
+    END
+END
+
+WINDOW 320, 240
+
+LET PLAYING = FALSE
+LET TIME = 0
+LET BARS = 16
+LET HEIGHTS[BARS]
+FOR (LET I = 0 : I < BARS : I++) THEN
+    HEIGHTS[I] = 0
+END
+
+LET SPACEWASDOWN = FALSE
+
+WHILE (TRUE) THEN
+    IF (INPUT("P") AND !PLAYING) THEN
+        PLAY "THEME"
+        PLAYING = TRUE
+    END
+
+    IF (INPUT("S") AND PLAYING) THEN
+        STOP "THEME"
+        PLAYING = FALSE
+    END
+
+    LET SPACEDOWN = INPUT(" ")
+    IF (SPACEDOWN AND !SPACEWASDOWN) THEN
+        PLAY "COIN"
+    END
+    SPACEWASDOWN = SPACEDOWN
+
+    COLOR "#1A1A2E"
+    FILL ALL
+
+    # A pretend equalizer that dances while the music plays
+    FOR (LET I = 0 : I < BARS : I++) THEN
+        IF (PLAYING AND TIME % 6 == 0) THEN
+            HEIGHTS[I] = 10 + RANDOM() * 100
+        END
+        HEIGHTS[I] = MAX(0, HEIGHTS[I] - 1.5)
+
+        COLOR "hsl(" + (200 + I * 8) + ", 80%, 60%)"
+        FILL 16 + I * 18, 200 - HEIGHTS[I], 14, HEIGHTS[I]
+    END
+
+    COLOR "WHITE"
+    IF (PLAYING) THEN
+        TEXT 16, 30, "NOW PLAYING: THEME"
+    ELSE
+        TEXT 16, 30, "PRESS P TO PLAY"
+    END
+    TEXT 16, 230, "S: STOP  SPACE: BLIP"
+
+    TIME++
+    SLEEP 1000 / 60
+END

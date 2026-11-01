@@ -1,0 +1,221 @@
+# Flappy: flap through the gaps between the pipes.
+# SPACE, W or the up arrow flaps. Uses a sprite with two frames and sound effects.
+
+SPRITE "BIRD"
+    SIZE 6, 4
+    FRAME "UP"
+        COLORDATA "Y", "#FFD93D"
+        COLORDATA "W", "#FFFFFF"
+        COLORDATA "B", "#222222"
+        COLORDATA "O", "#FF8C42"
+        PIXELDATA " WYY  "
+        PIXELDATA "WWYYB "
+        PIXELDATA "YYYYOO"
+        PIXELDATA " YYY  "
+    END
+    FRAME "DOWN"
+        COLORDATA "Y", "#FFD93D"
+        COLORDATA "W", "#FFFFFF"
+        COLORDATA "B", "#222222"
+        COLORDATA "O", "#FF8C42"
+        PIXELDATA " YYY  "
+        PIXELDATA "YYYYB "
+        PIXELDATA "WWYYOO"
+        PIXELDATA " WYY  "
+    END
+END
+
+# Sound effects
+SONG "FLAP"
+    BPM 1200
+    SHEET
+        TYPE "square"
+        GAIN 8
+        BAR "E5 A5"
+    END
+END
+
+SONG "POINT"
+    BPM 600
+    SHEET
+        TYPE "square"
+        GAIN 10
+        BAR "C6 E6 .."
+    END
+END
+
+SONG "HIT"
+    BPM 240
+    SHEET
+        TYPE "sawtooth"
+        GAIN 15
+        BAR "C3 G2"
+    END
+END
+
+WINDOW 320, 240
+
+LET GROUNDY = 220
+LET GRAVITY = 0.22
+LET FLAPSPEED = -3.8
+
+LET BIRDX = 60
+LET BIRDY = 100
+LET SPEEDY = 0
+
+LET PIPECOUNT = 3
+LET PIPEWIDTH = 32
+LET PIPESPACING = 120
+LET PIPESPEED = 1.6
+LET GAP = 72
+LET PIPEX[PIPECOUNT]
+LET GAPY[PIPECOUNT]
+LET PASSED[PIPECOUNT]
+
+# READY, PLAYING or DEAD
+LET STATE = "READY"
+LET SCORE = 0
+LET BEST = 0
+LET TIME = 0
+LET DEADTIME = 0
+LET GROUNDSCROLL = 0
+LET FLAPWASDOWN = FALSE
+
+FUNC RANDOMGAP() THEN
+    RETURN (30 + RANDOM() * (GROUNDY - GAP - 60))
+END
+
+FUNC RESET() THEN
+    STATE = "READY"
+    BIRDY = 100
+    SPEEDY = 0
+    SCORE = 0
+    FOR (LET I = 0 : I < PIPECOUNT : I++) THEN
+        PIPEX[I] = 340 + I * PIPESPACING
+        GAPY[I] = RANDOMGAP()
+        PASSED[I] = FALSE
+    END
+END
+
+FUNC DIE() THEN
+    IF (STATE == "PLAYING") THEN
+        STATE = "DEAD"
+        DEADTIME = 0
+        BEST = MAX(BEST, SCORE)
+        PLAY "HIT"
+    END
+END
+
+FUNC UPDATEPLAYING(FLAPPED) THEN
+    IF (FLAPPED) THEN
+        SPEEDY = FLAPSPEED
+        PLAY "FLAP"
+    END
+
+    SPEEDY = MIN(SPEEDY + GRAVITY, 6)
+    BIRDY = MAX(0, BIRDY + SPEEDY)
+
+    FOR (LET I = 0 : I < PIPECOUNT : I++) THEN
+        PIPEX[I] = PIPEX[I] - PIPESPEED
+
+        # A pipe that leaves on the left moves behind the last pipe with a new gap
+        IF (PIPEX[I] < -PIPEWIDTH) THEN
+            PIPEX[I] = PIPEX[I] + PIPECOUNT * PIPESPACING
+            GAPY[I] = RANDOMGAP()
+            PASSED[I] = FALSE
+        END
+
+        IF (!PASSED[I] AND PIPEX[I] + PIPEWIDTH < BIRDX) THEN
+            PASSED[I] = TRUE
+            SCORE++
+            PLAY "POINT"
+        END
+
+        # The hitbox is a little smaller than the sprite, which feels fairer
+        LET TOPHIT = COLLIDE(BIRDX + 3, BIRDY + 2, 18, 12, PIPEX[I], 0, PIPEWIDTH, GAPY[I])
+        LET BOTTOMHIT = COLLIDE(BIRDX + 3, BIRDY + 2, 18, 12, PIPEX[I], GAPY[I] + GAP, PIPEWIDTH, GROUNDY)
+        IF (TOPHIT OR BOTTOMHIT) THEN
+            DIE()
+        END
+    END
+
+    IF (BIRDY + 16 >= GROUNDY) THEN
+        BIRDY = GROUNDY - 16
+        DIE()
+    END
+END
+
+FUNC DRAWGAME() THEN
+    COLOR "#70C5CE"
+    FILL ALL
+
+    FOR (LET I = 0 : I < PIPECOUNT : I++) THEN
+        COLOR "#5EC13B"
+        FILL PIPEX[I], 0, PIPEWIDTH, GAPY[I]
+        FILL PIPEX[I], GAPY[I] + GAP, PIPEWIDTH, GROUNDY - GAPY[I] - GAP
+
+        COLOR "#3E8E2A"
+        FILL PIPEX[I] - 3, GAPY[I] - 10, PIPEWIDTH + 6, 10
+        FILL PIPEX[I] - 3, GAPY[I] + GAP, PIPEWIDTH + 6, 10
+    END
+
+    COLOR "#DED895"
+    FILL 0, GROUNDY, 320, 240 - GROUNDY
+    COLOR "#C9B66B"
+    FOR (LET X = -GROUNDSCROLL : X < 320 : X = X + 16) THEN
+        FILL X, GROUNDY, 8, 4
+    END
+
+    # Flap the wings while going up
+    IF (SPEEDY < 0 OR (STATE == "READY" AND FLOOR(TIME / 10) % 2 == 0)) THEN
+        DRAW BIRDX, BIRDY, "BIRD", "UP"
+    ELSE
+        DRAW BIRDX, BIRDY, "BIRD", "DOWN"
+    END
+
+    COLOR "WHITE"
+    TEXT 150, 30, SCORE
+
+    IF (STATE == "READY") THEN
+        TEXT 46, 150, "PRESS SPACE TO FLAP"
+    END
+    IF (STATE == "DEAD") THEN
+        TEXT 106, 110, "GAME OVER"
+        TEXT 94, 140, "BEST: " + BEST
+        TEXT 58, 170, "SPACE TO TRY AGAIN"
+    END
+END
+
+RESET()
+
+WHILE (TRUE) THEN
+    # Only a new press flaps, holding the key does nothing
+    LET FLAPDOWN = INPUT(" ") OR INPUT("W") OR INPUT("ARROWUP")
+    LET FLAPPED = FLAPDOWN AND !FLAPWASDOWN
+    FLAPWASDOWN = FLAPDOWN
+
+    IF (STATE == "READY") THEN
+        IF (FLAPPED) THEN
+            STATE = "PLAYING"
+            UPDATEPLAYING(TRUE)
+        END
+    ELSE
+        IF (STATE == "PLAYING") THEN
+            UPDATEPLAYING(FLAPPED)
+        ELSE
+            # Wait a moment before a flap restarts, so you don't restart by accident
+            DEADTIME++
+            IF (FLAPPED AND DEADTIME > 30) THEN
+                RESET()
+            END
+        END
+    END
+
+    IF (STATE <> "DEAD") THEN
+        GROUNDSCROLL = (GROUNDSCROLL + PIPESPEED) % 16
+    END
+
+    DRAWGAME()
+    TIME++
+    SLEEP 1000 / 60
+END

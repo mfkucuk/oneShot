@@ -1,0 +1,93 @@
+# Fireworks: a particle system. Particles live in a pool of arrays,
+# and new particles reuse the slot of the oldest one.
+# Press SPACE to launch extra rockets.
+WINDOW 320, 240
+
+LET COUNT = 300
+LET X[COUNT]
+LET Y[COUNT]
+LET SPEEDX[COUNT]
+LET SPEEDY[COUNT]
+LET LIFE[COUNT]
+LET HUE[COUNT]
+FOR (LET I = 0 : I < COUNT : I++) THEN
+    LIFE[I] = 0
+END
+LET NEXTSLOT = 0
+
+# One rocket at a time flies up and explodes at the top of its flight
+LET ROCKETX = 0
+LET ROCKETY = 0
+LET ROCKETSPEED = 0
+LET ROCKETFLYING = FALSE
+LET SPACEWASDOWN = FALSE
+LET TIME = 0
+
+FUNC LAUNCH() THEN
+    ROCKETX = 40 + RANDOM() * 240
+    ROCKETY = 240
+    ROCKETSPEED = -5 - RANDOM() * 1.5
+    ROCKETFLYING = TRUE
+END
+
+FUNC EXPLODE(CENTERX, CENTERY) THEN
+    LET COLOR_HUE = FLOOR(RANDOM() * 360)
+    FOR (LET N = 0 : N < 60 : N++) THEN
+        # Pick a random direction, then scale it to a random speed
+        LET DIRX = RANDOM() * 2 - 1
+        LET DIRY = RANDOM() * 2 - 1
+        LET LENGTH = MAX(SQRT(DIRX * DIRX + DIRY * DIRY), 0.01)
+        LET POWER = 0.5 + RANDOM() * 2
+
+        X[NEXTSLOT] = CENTERX
+        Y[NEXTSLOT] = CENTERY
+        SPEEDX[NEXTSLOT] = DIRX / LENGTH * POWER
+        SPEEDY[NEXTSLOT] = DIRY / LENGTH * POWER
+        LIFE[NEXTSLOT] = 50 + FLOOR(RANDOM() * 30)
+        HUE[NEXTSLOT] = COLOR_HUE + FLOOR(RANDOM() * 40)
+        NEXTSLOT = (NEXTSLOT + 1) % COUNT
+    END
+END
+
+WHILE (TRUE) THEN
+    LET SPACEDOWN = INPUT(" ")
+    IF (SPACEDOWN AND !SPACEWASDOWN AND !ROCKETFLYING) THEN
+        LAUNCH()
+    END
+    SPACEWASDOWN = SPACEDOWN
+
+    IF (!ROCKETFLYING AND TIME % 70 == 0) THEN
+        LAUNCH()
+    END
+
+    COLOR "rgba(5, 5, 20, 0.3)"
+    FILL ALL
+
+    IF (ROCKETFLYING) THEN
+        ROCKETY = ROCKETY + ROCKETSPEED
+        ROCKETSPEED = ROCKETSPEED + 0.08
+        COLOR "#FFE9A8"
+        FILL ROCKETX, ROCKETY, 3, 6
+
+        IF (ROCKETSPEED >= -0.5) THEN
+            ROCKETFLYING = FALSE
+            EXPLODE(ROCKETX, ROCKETY)
+        END
+    END
+
+    FOR (LET I = 0 : I < COUNT : I++) THEN
+        IF (LIFE[I] > 0) THEN
+            LIFE[I]--
+            SPEEDY[I] = SPEEDY[I] + 0.04
+            SPEEDX[I] = SPEEDX[I] * 0.98
+            X[I] = X[I] + SPEEDX[I]
+            Y[I] = Y[I] + SPEEDY[I]
+
+            COLOR "hsla(" + HUE[I] + ", 100%, 65%, " + MIN(1, LIFE[I] / 30) + ")"
+            FILL X[I], Y[I], 2, 2
+        END
+    END
+
+    TIME++
+    SLEEP 1000 / 60
+END

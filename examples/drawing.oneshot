@@ -1,0 +1,36 @@
+# Drawing: WINDOW opens a canvas, COLOR picks a CSS color, FILL draws rectangles
+# and TEXT writes text. This program draws once and ends, so the picture stays.
+WINDOW 320, 240
+
+# Background
+COLOR "#20232A"
+FILL ALL
+
+# A checkerboard
+LET CELL = 20
+FOR (LET ROW = 0 : ROW < 8 : ROW++) THEN
+    FOR (LET COLUMN = 0 : COLUMN < 8 : COLUMN++) THEN
+        IF ((ROW + COLUMN) % 2 == 0) THEN
+            COLOR "#EEEED2"
+        ELSE
+            COLOR "#769656"
+        END
+        FILL 10 + COLUMN * CELL, 40 + ROW * CELL, CELL, CELL
+    END
+END
+
+# Any CSS color works, including colors built from numbers
+FOR (LET I = 0 : I < 12 : I++) THEN
+    COLOR "hsl(" + I * 30 + ", 80%, 60%)"
+    FILL 190 + (I % 4) * 30, 40 + FLOOR(I / 4) * 30, 26, 26
+END
+
+# A gradient made of thin stripes
+FOR (LET X = 0 : X < 120 : X++) THEN
+    COLOR "rgb(" + FLOOR(X * 2) + ", 80, " + FLOOR(255 - X * 2) + ")"
+    FILL 190 + X, 140, 1, 60
+END
+
+COLOR "WHITE"
+TEXT 10, 26, "DRAWING WITH ONESHOT"
+TEXT 190, 225, "STRIPES"

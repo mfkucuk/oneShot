@@ -9,7 +9,45 @@
 		<div style="display: flex;">
 			<!-- Container for Textarea and Button -->
 			<div style="display: flex; flex-direction: column; margin-right: 10px;">
-<textarea name="code" id="code" style="width: 200px; height: 150px;">
+				<select id="examples" style="margin-bottom: 10px;">
+					<option value="">Load an example...</option>
+					<optgroup label="Language">
+						<option>helloWorld</option>
+						<option>fizzBuzz</option>
+						<option>functions</option>
+						<option>arrays</option>
+						<option>mathFunctions</option>
+						<option>prefixPostfixTest</option>
+					</optgroup>
+					<optgroup label="Algorithms">
+						<option>fibonacci</option>
+						<option>isPrime</option>
+						<option>primeSieve</option>
+						<option>collatz</option>
+						<option>towersOfHanoi</option>
+						<option>bubbleSort</option>
+						<option>insertionSort</option>
+						<option>binarySearch</option>
+					</optgroup>
+					<optgroup label="Graphics &amp; sound">
+						<option>drawing</option>
+						<option>bouncingBalls</option>
+						<option>mouseFollower</option>
+						<option>starfield</option>
+						<option>fireworks</option>
+						<option>gameOfLife</option>
+						<option>spriteAnimation</option>
+						<option>music</option>
+					</optgroup>
+					<optgroup label="Games">
+						<option>pong</option>
+						<option>snake</option>
+						<option>breakout</option>
+						<option>flappy</option>
+						<option>dodger</option>
+					</optgroup>
+				</select>
+<textarea name="code" id="code" spellcheck="false" style="width: 320px; height: 360px;">
 PRINT "HELLO, OneShot🏹"
 
 # SPRITES
@@ -83,17 +121,47 @@ PRINT "GAME OVER!"
 			const uploadButton = document.getElementById('upload');
 			const fileInput = document.getElementById('file-input');
 
-			// Redirect print messages to the <pre> tag
+			const output = document.querySelector('pre');
+			const examplesSelect = document.getElementById('examples');
+
+			// Redirect print messages and errors to the <pre> tag
 			oneShot.onPrint = (message) => {
-                document.querySelector('pre').innerText += `> ${message}\n`;
+				output.innerText += `> ${message}\n`;
+			}
+
+			oneShot.onError = (error) => {
+				output.innerText += `! ${OneShot.formatError(error)}\n`;
+			}
+
+			// Running a program stops the one that is already running
+			function runCode() {
+				output.innerText = '';
+				oneShot.run(codeArea.value);
 			}
 
 			// Run Button Event
-			runButton.addEventListener('click', async () => {
-				oneShot.stop();
-				await sleep(100);  // Ensure clean stop before rerunning
-				document.querySelector('pre').innerText = '';
-				oneShot.run(codeArea.value);
+			runButton.addEventListener('click', runCode);
+
+			// Examples are fetched, so the page has to be served over http (not opened as a file)
+			examplesSelect.addEventListener('change', async () => {
+				const name = examplesSelect.value;
+				if (!name) {
+					return;
+				}
+
+				try {
+					const response = await fetch(`examples/${name}.oneshot`);
+					if (!response.ok) {
+						throw new Error(response.statusText);
+					}
+					codeArea.value = await response.text();
+					runCode();
+				} catch (error) {
+					output.innerText = `! Could not load ${name}: ${error.message}. Serve this folder over http, e.g. "python3 -m http.server"\n`;
+				}
+
+				// Give the keyboard back to the game
+				examplesSelect.blur();
 			});
 
 			// Upload Button Event
@@ -132,7 +200,7 @@ PRINT "GAME OVER!"
 			});
 
 			// Auto-run the default code on page load
-			oneShot.run(codeArea.value);
+			runCode();
 		</script>
 	</body>
 </html>

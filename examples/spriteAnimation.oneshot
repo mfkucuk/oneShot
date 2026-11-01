@@ -1,0 +1,137 @@
+# Sprites are pixel art made of text. COLORDATA maps a character to a color,
+# PIXELDATA adds one row of pixels, and every character is drawn 4x4 pixels big.
+# A sprite can have many FRAMEs, drawn by name or by index.
+# Walk around with WASD or the arrow keys.
+
+SPRITE "HERO"
+    SIZE 8, 8
+
+    FRAME "IDLE"
+        COLORDATA "H", "#6B3E26"
+        COLORDATA "S", "#F1C27D"
+        COLORDATA "E", "#222222"
+        COLORDATA "C", "#3A7BD5"
+        COLORDATA "P", "#2D2D44"
+        PIXELDATA "  HHHH  "
+        PIXELDATA "  SSSS  "
+        PIXELDATA "  ESES  "
+        PIXELDATA "   SS   "
+        PIXELDATA " CCCCCC "
+        PIXELDATA "S CCCC S"
+        PIXELDATA "  PPPP  "
+        PIXELDATA "  P  P  "
+    END
+
+    FRAME "WALK1"
+        COLORDATA "H", "#6B3E26"
+        COLORDATA "S", "#F1C27D"
+        COLORDATA "E", "#222222"
+        COLORDATA "C", "#3A7BD5"
+        COLORDATA "P", "#2D2D44"
+        PIXELDATA "  HHHH  "
+        PIXELDATA "  SSSS  "
+        PIXELDATA "  ESES  "
+        PIXELDATA "   SS   "
+        PIXELDATA "SCCCCCC "
+        PIXELDATA "  CCCC S"
+        PIXELDATA "  PPPP  "
+        PIXELDATA " P    P "
+    END
+
+    FRAME "WALK2"
+        COLORDATA "H", "#6B3E26"
+        COLORDATA "S", "#F1C27D"
+        COLORDATA "E", "#222222"
+        COLORDATA "C", "#3A7BD5"
+        COLORDATA "P", "#2D2D44"
+        PIXELDATA "  HHHH  "
+        PIXELDATA "  SSSS  "
+        PIXELDATA "  ESES  "
+        PIXELDATA "   SS   "
+        PIXELDATA " CCCCCCS"
+        PIXELDATA "S CCCC  "
+        PIXELDATA "  PPPP  "
+        PIXELDATA "   PP   "
+    END
+END
+
+SPRITE "TREE"
+    SIZE 5, 6
+    FRAME
+        COLORDATA "G", "#2E8B57"
+        COLORDATA "L", "#3CB371"
+        COLORDATA "T", "#8B5A2B"
+        PIXELDATA "  L  "
+        PIXELDATA " LGL "
+        PIXELDATA "LGGGL"
+        PIXELDATA "GGGGG"
+        PIXELDATA "  T  "
+        PIXELDATA "  T  "
+    END
+END
+
+WINDOW 320, 240
+
+LET X = 144
+LET Y = 104
+LET SPEED = 2
+LET TIME = 0
+
+# Tree positions
+LET TREES = 6
+LET TREEX[TREES]
+LET TREEY[TREES]
+FOR (LET I = 0 : I < TREES : I++) THEN
+    TREEX[I] = 20 + FLOOR(RANDOM() * 260)
+    TREEY[I] = 20 + FLOOR(RANDOM() * 180)
+END
+
+WHILE (TRUE) THEN
+    LET MOVING = FALSE
+
+    IF (INPUT("W") OR INPUT("ARROWUP")) THEN
+        Y = Y - SPEED
+        MOVING = TRUE
+    END
+    IF (INPUT("S") OR INPUT("ARROWDOWN")) THEN
+        Y = Y + SPEED
+        MOVING = TRUE
+    END
+    IF (INPUT("A") OR INPUT("ARROWLEFT")) THEN
+        X = X - SPEED
+        MOVING = TRUE
+    END
+    IF (INPUT("D") OR INPUT("ARROWRIGHT")) THEN
+        X = X + SPEED
+        MOVING = TRUE
+    END
+
+    # Stay on screen (the hero is 8 x 8 characters, so 32 x 32 pixels)
+    X = MAX(0, MIN(X, 320 - 32))
+    Y = MAX(0, MIN(Y, 240 - 32))
+
+    COLOR "#7EC850"
+    FILL ALL
+
+    # Frames can be drawn by index: the tree has a single frame, frame 0
+    FOR (LET I = 0 : I < TREES : I++) THEN
+        DRAW TREEX[I], TREEY[I], "TREE", 0
+    END
+
+    # ...or by name: switch between the walking frames every 8 ticks
+    IF (MOVING) THEN
+        IF (FLOOR(TIME / 8) % 2 == 0) THEN
+            DRAW X, Y, "HERO", "WALK1"
+        ELSE
+            DRAW X, Y, "HERO", "WALK2"
+        END
+    ELSE
+        DRAW X, Y, "HERO", "IDLE"
+    END
+
+    COLOR "WHITE"
+    TEXT 8, 22, "WASD TO WALK"
+
+    TIME++
+    SLEEP 1000 / 60
+END

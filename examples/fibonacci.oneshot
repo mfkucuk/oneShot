@@ -1,0 +1,27 @@
+# Fibonacci numbers: each number is the sum of the two before it
+
+# The recursive version is short but slow, because it recomputes the same values
+FUNC FIB(N) THEN
+    IF (N < 2) THEN
+        RETURN (N)
+    END
+    RETURN (FIB(N - 1) + FIB(N - 2))
+END
+PRINT "RECURSIVE FIB(15) = " + FIB(15)
+
+# The iterative version fills an array instead, which is much faster
+LET COUNT = 30
+LET FIBS[COUNT]
+FIBS[0] = 0
+FIBS[1] = 1
+FOR (LET I = 2 : I < COUNT : I++) THEN
+    FIBS[I] = FIBS[I - 1] + FIBS[I - 2]
+END
+
+FOR (LET I = 0 : I < COUNT : I++) THEN
+    PRINT "FIB(" + I + ") = " + FIBS[I]
+END
+
+# The ratio of neighbours approaches the golden ratio
+PRINT "FIB(29) / FIB(28) = " + FIBS[29] / FIBS[28]
+PRINT "GOLDEN RATIO     = " + (1 + SQRT(5)) / 2

@@ -1,0 +1,170 @@
+# Breakout: bounce the ball off the paddle to clear every brick.
+# Move with the mouse, A / D or the arrow keys. SPACE launches the ball.
+WINDOW 320, 240
+
+# Bricks
+LET BRICKCOLS = 8
+LET BRICKROWS = 5
+LET BRICKCOUNT = BRICKCOLS * BRICKROWS
+LET BRICKWIDTH = 36
+LET BRICKHEIGHT = 12
+LET BRICKS[BRICKCOUNT]
+
+LET ROWCOLORS[BRICKROWS]
+ROWCOLORS[0] = "#FF595E"
+ROWCOLORS[1] = "#FF924C"
+ROWCOLORS[2] = "#FFCA3A"
+ROWCOLORS[3] = "#8AC926"
+ROWCOLORS[4] = "#1982C4"
+
+# Paddle
+LET PADDLEWIDTH = 50
+LET PADDLEHEIGHT = 8
+LET PADDLEX = 135
+LET PADDLEY = 220
+LET PADDLESPEED = 5
+LET LASTMOUSEX = MOUSEX
+
+# Ball
+LET BALLSIZE = 6
+LET BALLX = 0
+LET BALLY = 0
+LET BALLDX = 0
+LET BALLDY = 0
+LET BALLSPEED = 3
+LET LAUNCHED = FALSE
+
+LET SCORE = 0
+LET LIVES = 3
+
+FUNC BRICKX(I) THEN
+    RETURN ((I % BRICKCOLS) * 40 + 2)
+END
+
+FUNC BRICKY(I) THEN
+    RETURN (30 + FLOOR(I / BRICKCOLS) * 16)
+END
+
+FUNC RESETBRICKS() THEN
+    FOR (LET I = 0 : I < BRICKCOUNT : I++) THEN
+        BRICKS[I] = TRUE
+    END
+END
+
+FUNC RESETBALL() THEN
+    LAUNCHED = FALSE
+    BALLDX = 0
+    BALLDY = 0
+END
+
+FUNC MOVEPADDLE() THEN
+    IF (INPUT("A") OR INPUT("ARROWLEFT")) THEN
+        PADDLEX = PADDLEX - PADDLESPEED
+    END
+    IF (INPUT("D") OR INPUT("ARROWRIGHT")) THEN
+        PADDLEX = PADDLEX + PADDLESPEED
+    END
+
+    # Follow the mouse, but only while it moves, so the keys still work
+    IF (MOUSEX <> LASTMOUSEX) THEN
+        PADDLEX = MOUSEX - PADDLEWIDTH / 2
+        LASTMOUSEX = MOUSEX
+    END
+
+    PADDLEX = MAX(0, MIN(PADDLEX, 320 - PADDLEWIDTH))
+END
+
+FUNC MOVEBALL() THEN
+    IF (!LAUNCHED) THEN
+        # The ball rides on the paddle until it is launched
+        BALLX = PADDLEX + PADDLEWIDTH / 2 - BALLSIZE / 2
+        BALLY = PADDLEY - BALLSIZE - 1
+        IF (INPUT(" ")) THEN
+            LAUNCHED = TRUE
+            BALLDX = BALLSPEED * 0.6
+            BALLDY = -BALLSPEED
+        END
+        RETURN ()
+    END
+
+    BALLX = BALLX + BALLDX
+    BALLY = BALLY + BALLDY
+
+    # Walls and ceiling
+    IF (BALLX < 0 OR BALLX > 320 - BALLSIZE) THEN
+        BALLDX = -BALLDX
+        BALLX = MAX(0, MIN(BALLX, 320 - BALLSIZE))
+    END
+    IF (BALLY < 0) THEN
+        BALLDY = ABS(BALLDY)
+    END
+
+    # Lost the ball
+    IF (BALLY > 240) THEN
+        LIVES--
+        RESETBALL()
+        RETURN ()
+    END
+
+    # The paddle sends the ball left or right depending on where it hits
+    IF (BALLDY > 0 AND COLLIDE(BALLX, BALLY, BALLSIZE, BALLSIZE, PADDLEX, PADDLEY, PADDLEWIDTH, PADDLEHEIGHT)) THEN
+        LET OFFSET = (BALLX + BALLSIZE / 2 - PADDLEX - PADDLEWIDTH / 2) / (PADDLEWIDTH / 2)
+        BALLDX = OFFSET * BALLSPEED
+        BALLDY = -ABS(BALLDY)
+    END
+
+    # Bricks: break at most one brick per frame
+    LET HIT = FALSE
+    FOR (LET I = 0 : I < BRICKCOUNT : I++) THEN
+        IF (!HIT AND BRICKS[I] AND COLLIDE(BALLX, BALLY, BALLSIZE, BALLSIZE, BRICKX(I), BRICKY(I), BRICKWIDTH, BRICKHEIGHT)) THEN
+            BRICKS[I] = FALSE
+            BALLDY = -BALLDY
+            SCORE++
+            HIT = TRUE
+        END
+    END
+END
+
+FUNC DRAWGAME() THEN
+    COLOR "#0B0C10"
+    FILL ALL
+
+    FOR (LET I = 0 : I < BRICKCOUNT : I++) THEN
+        IF (BRICKS[I]) THEN
+            COLOR ROWCOLORS[FLOOR(I / BRICKCOLS)]
+            FILL BRICKX(I), BRICKY(I), BRICKWIDTH, BRICKHEIGHT
+        END
+    END
+
+    COLOR "WHITE"
+    FILL PADDLEX, PADDLEY, PADDLEWIDTH, PADDLEHEIGHT
+    FILL BALLX, BALLY, BALLSIZE, BALLSIZE
+
+    TEXT 6, 20, "SCORE " + SCORE
+    TEXT 230, 20, "LIVES " + LIVES
+END
+
+RESETBRICKS()
+RESETBALL()
+
+LET PLAYING = TRUE
+WHILE (PLAYING) THEN
+    MOVEPADDLE()
+    MOVEBALL()
+    DRAWGAME()
+
+    IF (LIVES == 0 OR SCORE == BRICKCOUNT) THEN
+        PLAYING = FALSE
+    END
+
+    SLEEP 1000 / 60
+END
+
+# The program ends here, and the last picture stays on screen
+COLOR "WHITE"
+IF (LIVES == 0) THEN
+    TEXT 106, 150, "GAME OVER"
+ELSE
+    TEXT 112, 150, "YOU WIN!"
+END
+TEXT 88, 175, "PRESS RUN AGAIN"

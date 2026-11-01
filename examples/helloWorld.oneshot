@@ -1,0 +1,17 @@
+# The smallest OneShot program: variables, strings and PRINT
+PRINT "HELLO, WORLD!"
+
+LET NAME = "ONESHOT"
+LET VERSION = 1
+PRINT "WELCOME TO " + NAME + "!"
+
+# + joins strings, and turns numbers and booleans into text
+PRINT "VERSION " + VERSION + ", READY = " + TRUE
+
+# Arithmetic follows the usual precedence rules
+LET RESULT = 2 + 3 * 4 - (10 - 4) / 2
+PRINT "2 + 3 * 4 - (10 - 4) / 2 = " + RESULT
+
+# A variable declared without a value starts as NULL
+LET NOTHING
+PRINT "NOTHING IS " + NOTHING

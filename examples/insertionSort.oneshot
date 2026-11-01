@@ -1,0 +1,30 @@
+# Insertion sort: take each element and slide it left until it is in place
+LET N = 10
+LET ARRAY[N]
+FOR (LET I = 0 : I < N : I++) THEN
+    ARRAY[I] = FLOOR(RANDOM() * 100)
+END
+
+FUNC SHOW(LABEL) THEN
+    LET LINE = LABEL
+    FOR (LET I = 0 : I < N : I++) THEN
+        LINE = LINE + " " + ARRAY[I]
+    END
+    PRINT LINE
+END
+
+SHOW("BEFORE:")
+
+FOR (LET I = 1 : I < N : I++) THEN
+    LET VALUE = ARRAY[I]
+    LET J = I - 1
+
+    # AND stops early, so ARRAY[J] is never read when J is -1
+    WHILE (J >= 0 AND ARRAY[J] > VALUE) THEN
+        ARRAY[J + 1] = ARRAY[J]
+        J--
+    END
+    ARRAY[J + 1] = VALUE
+END
+
+SHOW("AFTER: ")

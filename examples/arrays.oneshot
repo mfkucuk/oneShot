@@ -1,0 +1,51 @@
+# Arrays: LET NAME[SIZE] makes an array filled with NULL
+LET COUNT = 8
+LET SCORES[COUNT]
+
+FOR (LET I = 0 : I < COUNT : I++) THEN
+    SCORES[I] = FLOOR(RANDOM() * 100)
+END
+
+# Print the array on one line
+FUNC SHOW(LABEL, ARRAY, LENGTH) THEN
+    LET LINE = LABEL + ":"
+    FOR (LET I = 0 : I < LENGTH : I++) THEN
+        LINE = LINE + " " + ARRAY[I]
+    END
+    PRINT LINE
+END
+SHOW("SCORES", SCORES, COUNT)
+
+# SUM adds up every element
+PRINT "TOTAL " + SUM(SCORES) + ", AVERAGE " + SUM(SCORES) / COUNT
+
+# Find the largest and smallest values
+LET HIGHEST = SCORES[0]
+LET LOWEST = SCORES[0]
+FOR (LET I = 1 : I < COUNT : I++) THEN
+    HIGHEST = MAX(HIGHEST, SCORES[I])
+    LOWEST = MIN(LOWEST, SCORES[I])
+END
+PRINT "HIGHEST " + HIGHEST + ", LOWEST " + LOWEST
+
+# ++ and -- work on array elements too
+LET HITS[3]
+HITS[0] = 0
+HITS[1] = 0
+HITS[2] = 0
+FOR (LET I = 0 : I < 30 : I++) THEN
+    HITS[FLOOR(RANDOM() * 3)]++
+END
+SHOW("30 RANDOM PICKS", HITS, 3)
+
+# Arrays are passed by reference, so a function can change them
+FUNC REVERSE(ARRAY, LENGTH) THEN
+    FOR (LET I = 0 : I < LENGTH / 2 : I++) THEN
+        LET OTHER = LENGTH - 1 - I
+        LET TEMP = ARRAY[I]
+        ARRAY[I] = ARRAY[OTHER]
+        ARRAY[OTHER] = TEMP
+    END
+END
+REVERSE(SCORES, COUNT)
+SHOW("REVERSED", SCORES, COUNT)

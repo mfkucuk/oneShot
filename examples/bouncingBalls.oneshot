@@ -1,0 +1,55 @@
+# Bouncing balls: arrays hold the position, speed, size and color of every ball
+WINDOW 320, 240
+
+LET COUNT = 15
+LET X[COUNT]
+LET Y[COUNT]
+LET SPEEDX[COUNT]
+LET SPEEDY[COUNT]
+LET BALLSIZE[COUNT]
+LET BALLCOLOR[COUNT]
+
+FOR (LET I = 0 : I < COUNT : I++) THEN
+    BALLSIZE[I] = 6 + FLOOR(RANDOM() * 14)
+    X[I] = RANDOM() * (320 - BALLSIZE[I])
+    Y[I] = RANDOM() * (240 - BALLSIZE[I])
+    SPEEDX[I] = RANDOM() * 4 - 2
+    SPEEDY[I] = RANDOM() * 4 - 2
+    BALLCOLOR[I] = "hsl(" + FLOOR(RANDOM() * 360) + ", 80%, 60%)"
+END
+
+LET GRAVITY = 0.1
+
+WHILE (TRUE) THEN
+    # A see-through background leaves trails behind the balls
+    COLOR "rgba(0, 0, 0, 0.25)"
+    FILL ALL
+
+    FOR (LET I = 0 : I < COUNT : I++) THEN
+        SPEEDY[I] = SPEEDY[I] + GRAVITY
+        X[I] = X[I] + SPEEDX[I]
+        Y[I] = Y[I] + SPEEDY[I]
+
+        # Bounce off the walls
+        IF (X[I] < 0 OR X[I] > 320 - BALLSIZE[I]) THEN
+            SPEEDX[I] = -SPEEDX[I]
+            X[I] = MAX(0, MIN(X[I], 320 - BALLSIZE[I]))
+        END
+
+        # Bounce off the floor, losing a little energy
+        IF (Y[I] > 240 - BALLSIZE[I]) THEN
+            Y[I] = 240 - BALLSIZE[I]
+            SPEEDY[I] = -SPEEDY[I] * 0.9
+
+            # Kick balls that have come to rest
+            IF (ABS(SPEEDY[I]) < 1) THEN
+                SPEEDY[I] = -4 - RANDOM() * 4
+            END
+        END
+
+        COLOR BALLCOLOR[I]
+        FILL X[I], Y[I], BALLSIZE[I], BALLSIZE[I]
+    END
+
+    SLEEP 1000 / 60
+END

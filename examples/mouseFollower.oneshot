@@ -1,0 +1,39 @@
+# A tail that follows the mouse. Every segment moves part of the way
+# towards the one in front of it with LERP, which makes the motion smooth.
+WINDOW 320, 240
+
+LET SEGMENTS = 25
+LET X[SEGMENTS]
+LET Y[SEGMENTS]
+FOR (LET I = 0 : I < SEGMENTS : I++) THEN
+    X[I] = 160
+    Y[I] = 120
+END
+
+LET TIME = 0
+
+WHILE (TRUE) THEN
+    COLOR "#101018"
+    FILL ALL
+
+    # The head chases the mouse, the rest chase the segment in front
+    X[0] = LERP(X[0], MOUSEX, 0.2)
+    Y[0] = LERP(Y[0], MOUSEY, 0.2)
+    FOR (LET I = 1 : I < SEGMENTS : I++) THEN
+        X[I] = LERP(X[I], X[I - 1], 0.45)
+        Y[I] = LERP(Y[I], Y[I - 1], 0.45)
+    END
+
+    # Draw from the tail to the head, so the head is on top
+    FOR (LET I = SEGMENTS - 1 : I >= 0 : I--) THEN
+        LET SEGMENTSIZE = 20 - I * 0.6
+        COLOR "hsl(" + (TIME * 2 + I * 12) % 360 + ", 90%, 60%)"
+        FILL X[I] - SEGMENTSIZE / 2, Y[I] - SEGMENTSIZE / 2, SEGMENTSIZE, SEGMENTSIZE
+    END
+
+    COLOR "WHITE"
+    TEXT 8, 22, "MOVE THE MOUSE"
+
+    TIME++
+    SLEEP 1000 / 60
+END

@@ -1,0 +1,52 @@
+# Built-in math functions, and a few more written in OneShot
+PRINT "MIN(3, 8) = " + MIN(3, 8)
+PRINT "MAX(3, 8) = " + MAX(3, 8)
+PRINT "ABS(-12) = " + ABS(-12)
+PRINT "FLOOR(4.7) = " + FLOOR(4.7)
+PRINT "CEIL(4.2) = " + CEIL(4.2)
+PRINT "INT(-4.7) = " + INT(-4.7)
+PRINT "INT OF THE TEXT 42, PLUS 1 = " + (INT("42") + 1)
+PRINT "SQRT(144) = " + SQRT(144)
+PRINT "LERP(0, 100, 0.25) = " + LERP(0, 100, 0.25)
+PRINT "17 % 5 = " + 17 % 5
+PRINT "A DICE ROLL: " + (FLOOR(RANDOM() * 6) + 1)
+
+# Greatest common divisor, with Euclid's algorithm
+FUNC GCD(A, B) THEN
+    IF (B == 0) THEN
+        RETURN (A)
+    END
+    RETURN (GCD(B, A % B))
+END
+PRINT "GCD(84, 36) = " + GCD(84, 36)
+
+# Least common multiple
+FUNC LCM(A, B) THEN
+    RETURN (A / GCD(A, B) * B)
+END
+PRINT "LCM(4, 6) = " + LCM(4, 6)
+
+# Integer power by repeated squaring
+FUNC POW(BASE, EXPONENT) THEN
+    IF (EXPONENT == 0) THEN
+        RETURN (1)
+    END
+    LET HALF = POW(BASE, FLOOR(EXPONENT / 2))
+    IF (EXPONENT % 2 == 0) THEN
+        RETURN (HALF * HALF)
+    END
+    RETURN (HALF * HALF * BASE)
+END
+PRINT "POW(2, 10) = " + POW(2, 10)
+
+# Keep a value between a lower and an upper bound
+FUNC CLAMP(VALUE, LOW, HIGH) THEN
+    RETURN (MAX(LOW, MIN(HIGH, VALUE)))
+END
+PRINT "CLAMP(150, 0, 100) = " + CLAMP(150, 0, 100)
+
+# Round to the nearest whole number
+FUNC ROUND(VALUE) THEN
+    RETURN (FLOOR(VALUE + 0.5))
+END
+PRINT "ROUND(2.5) = " + ROUND(2.5) + ", ROUND(2.49) = " + ROUND(2.49)
