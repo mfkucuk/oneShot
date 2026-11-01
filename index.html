@@ -1,53 +1,556 @@
 <!doctype html>
-<html>
+<html lang="en">
 	<head>
-    	<title>OneShot</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>OneShot Playground</title>
+		<meta name="description" content="Write and run OneShot, a tiny language for making pixel games in the browser.">
+		<link rel="icon" href="favicon.ico" type="image/x-icon"/>
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
 		<script src='oneShot.js'></script>
-		<link rel="icon" href="favicon.ico" type="image/x-icon"/> 
+		<style>
+			:root {
+				--bg: #14101f;
+				--bg-dots: #1d1730;
+				--panel: #221b36;
+				--panel-dark: #17122a;
+				--edge: #0a0812;
+				--line: #3a2f5c;
+				--text: #e8e2ff;
+				--muted: #8f86b3;
+				--accent: #f0534b;
+				--accent-dark: #a8322c;
+				--wood: #c47a3c;
+				--wood-dark: #7d4a20;
+				--green: #5ee27a;
+				--yellow: #ffd24a;
+				--px: 4px;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			html, body {
+				margin: 0;
+			}
+
+			body {
+				min-height: 100vh;
+				color: var(--text);
+				background-color: var(--bg);
+				background-image: radial-gradient(var(--bg-dots) 1px, transparent 1px);
+				background-size: 8px 8px;
+				font-family: 'VT323', monospace;
+				font-size: 20px;
+				line-height: 1.2;
+			}
+
+			.pixel-font {
+				font-family: 'Press Start 2P', monospace;
+			}
+
+			/* Panels and buttons get stepped corners from a ring of hard shadows */
+			.pixel-box {
+				background: var(--panel);
+				box-shadow:
+					0 calc(var(--px) * -1) 0 0 var(--edge),
+					0 var(--px) 0 0 var(--edge),
+					calc(var(--px) * -1) 0 0 0 var(--edge),
+					var(--px) 0 0 0 var(--edge),
+					0 calc(var(--px) * 2) 0 0 rgba(0, 0, 0, 0.45),
+					var(--px) var(--px) 0 0 rgba(0, 0, 0, 0.45),
+					calc(var(--px) * 2) calc(var(--px) * 2) 0 0 transparent;
+			}
+
+			/* Header */
+			header {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				justify-content: space-between;
+				gap: 16px;
+				max-width: 1240px;
+				margin: 0 auto;
+				padding: 28px 24px 8px;
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 16px;
+			}
+
+			.brand img {
+				width: 48px;
+				height: 48px;
+				image-rendering: pixelated;
+			}
+
+			.brand h1 {
+				margin: 0;
+				font-size: 28px;
+				letter-spacing: 2px;
+				color: var(--text);
+				text-shadow: 4px 4px 0 var(--accent-dark);
+			}
+
+			.brand h1 span {
+				color: var(--accent);
+				text-shadow: 4px 4px 0 var(--edge);
+			}
+
+			.brand p {
+				margin: 8px 0 0;
+				color: var(--muted);
+			}
+
+			.links {
+				display: flex;
+				gap: 20px;
+			}
+
+			.links a {
+				color: var(--muted);
+				text-decoration: none;
+				font-size: 10px;
+			}
+
+			.links a:hover {
+				color: var(--yellow);
+			}
+
+			.links a::before {
+				content: '> ';
+				color: var(--accent);
+			}
+
+			/* Layout */
+			main {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+				gap: 32px;
+				max-width: 1240px;
+				margin: 0 auto;
+				padding: 24px 24px 40px;
+			}
+
+			.column {
+				display: flex;
+				flex-direction: column;
+				gap: 32px;
+				min-width: 0;
+			}
+
+			.panel {
+				display: flex;
+				flex-direction: column;
+				min-width: 0;
+			}
+
+			.panel-title {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				padding: 10px 14px;
+				background: var(--line);
+				font-size: 10px;
+				letter-spacing: 1px;
+				text-transform: uppercase;
+			}
+
+			.panel-title .dots {
+				display: flex;
+				gap: 6px;
+			}
+
+			.panel-title .dots i {
+				width: 8px;
+				height: 8px;
+				background: var(--muted);
+			}
+
+			.panel-title .dots i:first-child {
+				background: var(--accent);
+			}
+
+			.panel-title .dots i:nth-child(2) {
+				background: var(--yellow);
+			}
+
+			.panel-title .dots i:nth-child(3) {
+				background: var(--green);
+			}
+
+			.panel-body {
+				padding: 14px;
+			}
+
+			/* Toolbar */
+			.toolbar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 14px;
+				padding: 14px;
+				border-top: var(--px) solid var(--edge);
+			}
+
+			.toolbar .spacer {
+				flex: 1;
+			}
+
+			.hint {
+				color: var(--muted);
+				font-size: 18px;
+			}
+
+			kbd {
+				padding: 0 4px;
+				color: var(--text);
+				background: var(--panel-dark);
+				font-family: inherit;
+			}
+
+			button {
+				--btn: var(--line);
+				--btn-dark: var(--edge);
+				position: relative;
+				padding: 10px 14px;
+				border: none;
+				color: var(--text);
+				background: var(--btn);
+				box-shadow:
+					0 calc(var(--px) * -1) 0 0 var(--edge),
+					0 var(--px) 0 0 var(--edge),
+					calc(var(--px) * -1) 0 0 0 var(--edge),
+					var(--px) 0 0 0 var(--edge),
+					inset 0 calc(var(--px) * -1) 0 0 var(--btn-dark);
+				font-family: 'Press Start 2P', monospace;
+				font-size: 10px;
+				cursor: pointer;
+				transition: filter 0.1s;
+			}
+
+			button:hover {
+				filter: brightness(1.15);
+			}
+
+			button:active {
+				top: 2px;
+				box-shadow:
+					0 calc(var(--px) * -1) 0 0 var(--edge),
+					0 var(--px) 0 0 var(--edge),
+					calc(var(--px) * -1) 0 0 0 var(--edge),
+					var(--px) 0 0 0 var(--edge);
+			}
+
+			button:focus-visible,
+			select:focus-visible {
+				outline: 2px dashed var(--yellow);
+				outline-offset: 6px;
+			}
+
+			button.primary {
+				--btn: var(--accent);
+				--btn-dark: var(--accent-dark);
+			}
+
+			button.wood {
+				--btn: var(--wood);
+				--btn-dark: var(--wood-dark);
+			}
+
+			button.small {
+				padding: 6px 8px;
+				font-size: 8px;
+			}
+
+			select {
+				width: 100%;
+				padding: 8px 36px 8px 10px;
+				border: none;
+				color: var(--text);
+				background:
+					linear-gradient(45deg, transparent 50%, var(--accent) 50%) right 20px center / 6px 6px no-repeat,
+					linear-gradient(-45deg, transparent 50%, var(--accent) 50%) right 14px center / 6px 6px no-repeat,
+					var(--panel-dark);
+				box-shadow: inset 0 0 0 2px var(--line);
+				font-family: 'VT323', monospace;
+				font-size: 20px;
+				appearance: none;
+				cursor: pointer;
+			}
+
+			select optgroup,
+			select option {
+				color: var(--text);
+				background: var(--panel-dark);
+			}
+
+			/* Editor */
+			.editor {
+				display: flex;
+				height: 480px;
+				background: var(--panel-dark);
+				box-shadow: inset 0 0 0 2px var(--line);
+				overflow: hidden;
+			}
+
+			.gutter {
+				flex: none;
+				min-width: 48px;
+				padding: 10px 8px 10px 0;
+				border-right: 2px solid var(--line);
+				color: #554a7d;
+				text-align: right;
+				white-space: pre;
+				overflow: hidden;
+				user-select: none;
+			}
+
+			.gutter,
+			#code {
+				font-family: 'VT323', monospace;
+				font-size: 20px;
+				line-height: 22px;
+			}
+
+			#code {
+				flex: 1;
+				min-width: 0;
+				padding: 10px 12px;
+				border: none;
+				outline: none;
+				color: var(--text);
+				background: transparent;
+				caret-color: var(--yellow);
+				white-space: pre;
+				overflow: auto;
+				resize: none;
+				tab-size: 4;
+			}
+
+			#code::selection {
+				background: var(--accent-dark);
+			}
+
+			/* Screen */
+			.screen {
+				position: relative;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				min-height: 300px;
+				padding: 24px;
+				background:
+					repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.02) 0 2px, transparent 2px 4px),
+					#08060e;
+				overflow: hidden;
+			}
+
+			#one-shot-canvas {
+				display: block;
+				background: #000;
+				image-rendering: pixelated;
+				image-rendering: crisp-edges;
+				box-shadow: 0 0 0 var(--px) var(--edge), 0 0 0 calc(var(--px) * 2) var(--line);
+			}
+
+			.status {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				color: var(--muted);
+				font-family: 'VT323', monospace;
+				font-size: 18px;
+				text-transform: none;
+				letter-spacing: 0;
+			}
+
+			.status::before {
+				content: '';
+				width: 8px;
+				height: 8px;
+				background: var(--muted);
+			}
+
+			.status.running {
+				color: var(--green);
+			}
+
+			.status.running::before {
+				background: var(--green);
+				animation: blink 1s steps(1) infinite;
+			}
+
+			.status.error {
+				color: var(--accent);
+			}
+
+			.status.error::before {
+				background: var(--accent);
+			}
+
+			@keyframes blink {
+				50% {
+					opacity: 0;
+				}
+			}
+
+			/* Console */
+			#output {
+				height: 200px;
+				margin: 0;
+				padding: 12px 14px;
+				background: var(--panel-dark);
+				box-shadow: inset 0 0 0 2px var(--line);
+				font-family: 'VT323', monospace;
+				font-size: 20px;
+				white-space: pre-wrap;
+				word-break: break-word;
+				overflow-y: auto;
+			}
+
+			#output .print {
+				color: var(--green);
+			}
+
+			#output .error {
+				color: var(--accent);
+			}
+
+			#output:empty::before {
+				content: 'Nothing printed yet_';
+				color: #554a7d;
+			}
+
+			/* Scrollbars */
+			* {
+				scrollbar-color: var(--line) transparent;
+			}
+
+			::-webkit-scrollbar {
+				width: 12px;
+				height: 12px;
+			}
+
+			::-webkit-scrollbar-thumb {
+				background: var(--line);
+			}
+
+			::-webkit-scrollbar-track,
+			::-webkit-scrollbar-corner {
+				background: transparent;
+			}
+
+			footer {
+				padding: 0 24px 32px;
+				color: var(--muted);
+				text-align: center;
+				font-size: 18px;
+			}
+
+			footer a {
+				color: var(--wood);
+			}
+
+			@media (max-width: 900px) {
+				main {
+					grid-template-columns: minmax(0, 1fr);
+				}
+
+				.editor {
+					height: 360px;
+				}
+			}
+
+			@media (max-width: 520px) {
+				header,
+				main {
+					padding-left: 16px;
+					padding-right: 16px;
+				}
+
+				.brand h1 {
+					font-size: 20px;
+				}
+
+				.screen {
+					padding: 16px;
+				}
+			}
+		</style>
 	</head>
-	<body>	
-		<div style="display: flex;">
-			<!-- Container for Textarea and Button -->
-			<div style="display: flex; flex-direction: column; margin-right: 10px;">
-				<select id="examples" style="margin-bottom: 10px;">
-					<option value="">Load an example...</option>
-					<optgroup label="Language">
-						<option>helloWorld</option>
-						<option>fizzBuzz</option>
-						<option>functions</option>
-						<option>arrays</option>
-						<option>mathFunctions</option>
-						<option>prefixPostfixTest</option>
-					</optgroup>
-					<optgroup label="Algorithms">
-						<option>fibonacci</option>
-						<option>isPrime</option>
-						<option>primeSieve</option>
-						<option>collatz</option>
-						<option>towersOfHanoi</option>
-						<option>bubbleSort</option>
-						<option>insertionSort</option>
-						<option>binarySearch</option>
-					</optgroup>
-					<optgroup label="Graphics &amp; sound">
-						<option>drawing</option>
-						<option>bouncingBalls</option>
-						<option>mouseFollower</option>
-						<option>starfield</option>
-						<option>fireworks</option>
-						<option>gameOfLife</option>
-						<option>spriteAnimation</option>
-						<option>music</option>
-					</optgroup>
-					<optgroup label="Games">
-						<option>pong</option>
-						<option>snake</option>
-						<option>breakout</option>
-						<option>flappy</option>
-						<option>dodger</option>
-					</optgroup>
-				</select>
-<textarea name="code" id="code" spellcheck="false" style="width: 320px; height: 360px;">
+	<body>
+		<header>
+			<div class="brand">
+				<img src="favicon.ico" alt="">
+				<div>
+					<h1 class="pixel-font">ONE<span>SHOT</span></h1>
+					<p>A tiny language for pixel games. Write, run, repeat.</p>
+				</div>
+			</div>
+			<nav class="links pixel-font">
+				<a href="https://github.com/mfkucuk/oneShot#-language-reference">Docs</a>
+				<a href="https://github.com/mfkucuk/oneShot">GitHub</a>
+			</nav>
+		</header>
+
+		<main>
+			<!-- Editor -->
+			<section class="panel pixel-box">
+				<div class="panel-title pixel-font">
+					<span>Code</span>
+					<span class="dots"><i></i><i></i><i></i></span>
+				</div>
+				<div class="panel-body">
+					<select id="examples" aria-label="Examples">
+						<option value="">Load an example...</option>
+						<optgroup label="Language">
+							<option>helloWorld</option>
+							<option>fizzBuzz</option>
+							<option>functions</option>
+							<option>arrays</option>
+							<option>mathFunctions</option>
+							<option>prefixPostfixTest</option>
+						</optgroup>
+						<optgroup label="Algorithms">
+							<option>fibonacci</option>
+							<option>isPrime</option>
+							<option>primeSieve</option>
+							<option>collatz</option>
+							<option>towersOfHanoi</option>
+							<option>bubbleSort</option>
+							<option>insertionSort</option>
+							<option>binarySearch</option>
+						</optgroup>
+						<optgroup label="Graphics &amp; sound">
+							<option>drawing</option>
+							<option>bouncingBalls</option>
+							<option>mouseFollower</option>
+							<option>starfield</option>
+							<option>fireworks</option>
+							<option>gameOfLife</option>
+							<option>spriteAnimation</option>
+							<option>music</option>
+						</optgroup>
+						<optgroup label="Games">
+							<option>pong</option>
+							<option>snake</option>
+							<option>breakout</option>
+							<option>flappy</option>
+							<option>dodger</option>
+						</optgroup>
+					</select>
+				</div>
+				<div class="panel-body" style="padding-top: 0;">
+					<div class="editor">
+						<div class="gutter" id="gutter" aria-hidden="true">1</div>
+<textarea name="code" id="code" spellcheck="false" aria-label="OneShot code">
 PRINT "HELLO, OneShot🏹"
 
 # SPRITES
@@ -77,13 +580,13 @@ WHILE RUNNING THEN
 	FILL ALL
 	DRAW X, Y, "CIRCLE", "FIRST"
 
-	IF (INPUT("W")) THEN 
+	IF (INPUT("W")) THEN
 		Y = Y - 1
 	END
-	IF (INPUT("A")) THEN 
+	IF (INPUT("A")) THEN
 		X = X - 1
 	END
-	IF (INPUT("S")) THEN 
+	IF (INPUT("S")) THEN
 		Y = Y + 1
 	END
 	IF (INPUT("D")) THEN
@@ -102,45 +605,112 @@ TEXT 95, 75, "GAME OVER!"
 
 PRINT "GAME OVER!"
 </textarea>
-				<button id="run" style="margin-top: 10px;">Run</button>
-				<button id="upload" style="margin-top: 10px;">Upload</button>
-				<input type="file" id="file-input" accept=".oneshot" style="display: none;">
+					</div>
+				</div>
+				<div class="toolbar">
+					<button id="run" class="primary">&#9654; Run</button>
+					<button id="stop">&#9632; Stop</button>
+					<button id="upload" class="wood">Upload</button>
+					<input type="file" id="file-input" accept=".oneshot" style="display: none;">
+					<span class="spacer"></span>
+					<span class="hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run</span>
+				</div>
+			</section>
+
+			<div class="column">
+				<!-- Screen -->
+				<section class="panel pixel-box">
+					<div class="panel-title pixel-font">
+						<span>Screen <span id="scale" style="color: var(--muted);"></span></span>
+						<span class="status" id="status">Idle</span>
+					</div>
+					<div class="screen" id="screen">
+						<canvas id="one-shot-canvas" width="300" height="150"></canvas>
+					</div>
+				</section>
+
+				<!-- Console -->
+				<section class="panel pixel-box">
+					<div class="panel-title pixel-font">
+						<span>Console</span>
+						<button id="clear" class="small">Clear</button>
+					</div>
+					<div class="panel-body">
+						<pre id="output"></pre>
+					</div>
+				</section>
 			</div>
-			
-			<!-- Container for Canvas and Preformatted Text -->
-			<div style="display: flex; align-items: flex-start;">
-				<canvas id="one-shot-canvas" style="border: 1px solid #000; margin-right: 10px;" width="300" height="150"></canvas>
-				<pre style="border: 1px solid #000; padding: 10px;"></pre>
-			</div>
-		</div>
-		  
+		</main>
+
+		<footer>
+			Made with <a href="https://github.com/mfkucuk/oneShot/blob/main/oneShot.js">oneShot.js</a>, one file and no dependencies.
+		</footer>
+
 		<script>
 			const oneShot = new OneShot('one-shot-canvas');
 			const codeArea = document.getElementById('code');
+			const gutter = document.getElementById('gutter');
 			const runButton = document.getElementById('run');
+			const stopButton = document.getElementById('stop');
 			const uploadButton = document.getElementById('upload');
+			const clearButton = document.getElementById('clear');
 			const fileInput = document.getElementById('file-input');
+			const canvas = document.getElementById('one-shot-canvas');
+			const screen = document.getElementById('screen');
+			const scaleLabel = document.getElementById('scale');
+			const statusLabel = document.getElementById('status');
 
-			const output = document.querySelector('pre');
+			const output = document.getElementById('output');
 			const examplesSelect = document.getElementById('examples');
 
-			// Redirect print messages and errors to the <pre> tag
+			function setStatus(text, state) {
+				statusLabel.textContent = text;
+				statusLabel.className = `status ${state}`;
+			}
+
+			function log(message, kind) {
+				const line = document.createElement('div');
+				line.className = kind;
+				line.textContent = message;
+				output.appendChild(line);
+				output.scrollTop = output.scrollHeight;
+			}
+
+			// Redirect print messages and errors to the console panel
 			oneShot.onPrint = (message) => {
-				output.innerText += `> ${message}\n`;
+				log(`> ${message}`, 'print');
 			}
 
 			oneShot.onError = (error) => {
-				output.innerText += `! ${OneShot.formatError(error)}\n`;
+				log(`! ${OneShot.formatError(error)}`, 'error');
+				setStatus('Error', 'error');
 			}
 
 			// Running a program stops the one that is already running
-			function runCode() {
-				output.innerText = '';
-				oneShot.run(codeArea.value);
+			let runId = 0;
+
+			async function runCode() {
+				const id = ++runId;
+				output.textContent = '';
+				setStatus('Running', 'running');
+				await oneShot.run(codeArea.value);
+
+				if (id === runId && statusLabel.classList.contains('running')) {
+					setStatus('Done', 'idle');
+				}
 			}
 
-			// Run Button Event
 			runButton.addEventListener('click', runCode);
+
+			stopButton.addEventListener('click', () => {
+				runId++;
+				oneShot.stop();
+				setStatus('Stopped', 'idle');
+			});
+
+			clearButton.addEventListener('click', () => {
+				output.textContent = '';
+			});
 
 			// Examples are fetched, so the page has to be served over http (not opened as a file)
 			examplesSelect.addEventListener('change', async () => {
@@ -155,21 +725,22 @@ PRINT "GAME OVER!"
 						throw new Error(response.statusText);
 					}
 					codeArea.value = await response.text();
+					updateGutter();
+					codeArea.scrollTop = 0;
 					runCode();
 				} catch (error) {
-					output.innerText = `! Could not load ${name}: ${error.message}. Serve this folder over http, e.g. "python3 -m http.server"\n`;
+					output.textContent = '';
+					log(`! Could not load ${name}: ${error.message}. Serve this folder over http, e.g. "python3 -m http.server"`, 'error');
 				}
 
 				// Give the keyboard back to the game
 				examplesSelect.blur();
 			});
 
-			// Upload Button Event
 			uploadButton.addEventListener('click', () => {
-				fileInput.click();  // Trigger file input click
+				fileInput.click();
 			});
 
-			// File Input Change Event
 			fileInput.addEventListener('change', (event) => {
 				const file = event.target.files[0];
 
@@ -177,14 +748,40 @@ PRINT "GAME OVER!"
 					const reader = new FileReader();
 
 					reader.onload = (e) => {
-						codeArea.value = e.target.result;  // Set file content to textarea
+						codeArea.value = e.target.result;
+						updateGutter();
 					};
 
-					reader.readAsText(file);  // Read file as plain text
+					reader.readAsText(file);
 				}
+
+				// Allow uploading the same file again
+				fileInput.value = '';
+			});
+
+			// Line numbers follow the textarea's content and scroll position
+			function updateGutter() {
+				const lines = codeArea.value.split('\n').length;
+				let numbers = '';
+				for (let i = 1; i <= lines; i++) {
+					numbers += i + '\n';
+				}
+				gutter.textContent = numbers;
+				gutter.scrollTop = codeArea.scrollTop;
+			}
+
+			codeArea.addEventListener('input', updateGutter);
+			codeArea.addEventListener('scroll', () => {
+				gutter.scrollTop = codeArea.scrollTop;
 			});
 
 			codeArea.addEventListener('keydown', (event) => {
+				if (event.key == 'Enter' && (event.ctrlKey || event.metaKey)) {
+					event.preventDefault();
+					runCode();
+					return;
+				}
+
 				if (event.key == 'Tab') {
 					event.preventDefault();
 					const textarea = event.target;
@@ -196,10 +793,28 @@ PRINT "GAME OVER!"
 
 					// Move the cursor after the inserted spaces
 					textarea.selectionStart = textarea.selectionEnd = start + 4;
+					updateGutter();
 				}
 			});
 
+			// Scale the canvas by whole numbers so pixels stay crisp; WINDOW changes its size at runtime
+			function fitCanvas() {
+				const style = getComputedStyle(screen);
+				const availableWidth = screen.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 16;
+				const availableHeight = Math.max(window.innerHeight * 0.55, 240);
+				const scale = Math.max(1, Math.floor(Math.min(availableWidth / canvas.width, availableHeight / canvas.height)));
+
+				canvas.style.width = `${canvas.width * scale}px`;
+				canvas.style.height = `${canvas.height * scale}px`;
+				scaleLabel.textContent = `${canvas.width}x${canvas.height} @${scale}x`;
+			}
+
+			new MutationObserver(fitCanvas).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+			new ResizeObserver(fitCanvas).observe(screen);
+
 			// Auto-run the default code on page load
+			updateGutter();
+			fitCanvas();
 			runCode();
 		</script>
 	</body>
