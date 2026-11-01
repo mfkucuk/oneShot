@@ -1,0 +1,107 @@
+{
+    "name": "oneshot-language",
+    "displayName": "OneShot",
+    "description": "Highlighting, completion, a game runner and a live sprite & music preview for the OneShot language",
+    "version": "0.2.0",
+    "publisher": "mfkucuk",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/mfkucuk/oneShot"
+    },
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "main": "./extension.js",
+    "activationEvents": [
+        "onLanguage:oneshot"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "oneshot",
+                "aliases": ["OneShot", "oneshot"],
+                "extensions": [".oneshot"],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "oneshot",
+                "scopeName": "source.oneshot",
+                "path": "./syntaxes/oneshot.tmLanguage.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "oneshot.run",
+                "title": "Run File",
+                "category": "OneShot",
+                "icon": "$(play)"
+            },
+            {
+                "command": "oneshot.stop",
+                "title": "Stop",
+                "category": "OneShot",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "oneshot.showPreview",
+                "title": "Show Sprite & Music Preview",
+                "category": "OneShot",
+                "icon": "$(open-preview)"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "oneshot.run",
+                    "when": "editorLangId == oneshot",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "oneshot.showPreview",
+                    "when": "editorLangId == oneshot",
+                    "group": "navigation@2"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "oneshot.run",
+                    "when": "editorLangId == oneshot"
+                },
+                {
+                    "command": "oneshot.showPreview",
+                    "when": "editorLangId == oneshot"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "oneshot.run",
+                "key": "f5",
+                "when": "editorLangId == oneshot && !inDebugMode"
+            },
+            {
+                "command": "oneshot.stop",
+                "key": "shift+f5",
+                "when": "editorLangId == oneshot && !inDebugMode"
+            }
+        ],
+        "configuration": {
+            "title": "OneShot",
+            "properties": {
+                "oneshot.runOnSave": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Run the file again when it is saved, while the run panel is showing it."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "node scripts/copy-interpreter.js"
+    }
+}

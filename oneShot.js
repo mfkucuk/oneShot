@@ -219,9 +219,10 @@ class Input {
             return;
         }
 
+        // The canvas may be displayed bigger or smaller than its resolution, e.g. when zoomed
         const rect = this.canvas.getBoundingClientRect();
-        this.mouseX = event.clientX - rect.left;
-        this.mouseY = event.clientY - rect.top;
+        this.mouseX = (event.clientX - rect.left) * (this.canvas.width / (rect.width || this.canvas.width));
+        this.mouseY = (event.clientY - rect.top) * (this.canvas.height / (rect.height || this.canvas.height));
     }
 }
 

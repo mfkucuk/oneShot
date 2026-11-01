@@ -35,6 +35,9 @@ To try them, serve this folder over http and open `index.html`, then pick an exa
 python3 -m http.server
 ```
 
+## 🖍️Editor Support
+[vscode-oneshot](vscode-oneshot) is a Visual Studio Code extension for `.oneshot` files. It adds highlighting, completion, a panel that runs your game next to the code, and a live preview of your sprites and songs. See its README to install it.
+
 ## 📖Language Reference
 Keywords are upper case. Statements are separated by whitespace, so each one usually goes on its own line. `#` starts a comment.
 

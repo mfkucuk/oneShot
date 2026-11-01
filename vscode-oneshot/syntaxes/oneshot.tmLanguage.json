@@ -1,0 +1,122 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "OneShot",
+    "scopeName": "source.oneshot",
+    "fileTypes": ["oneshot"],
+    "patterns": [
+        { "include": "#comment" },
+        { "include": "#string" },
+        { "include": "#number" },
+        { "include": "#function-declaration" },
+        { "include": "#keywords" },
+        { "include": "#function-call" },
+        { "include": "#operators" },
+        { "include": "#punctuation" },
+        { "include": "#variable" }
+    ],
+    "repository": {
+        "comment": {
+            "name": "comment.line.number-sign.oneshot",
+            "match": "#.*$"
+        },
+        "string": {
+            "comment": "Strings have no escape sequences and may span lines",
+            "name": "string.quoted.double.oneshot",
+            "begin": "\"",
+            "end": "\"",
+            "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.oneshot" } },
+            "endCaptures": { "0": { "name": "punctuation.definition.string.end.oneshot" } }
+        },
+        "number": {
+            "name": "constant.numeric.oneshot",
+            "match": "\\b\\d+(\\.\\d+)?\\b"
+        },
+        "function-declaration": {
+            "match": "\\b(FUNC)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+            "captures": {
+                "1": { "name": "storage.type.function.oneshot" },
+                "2": { "name": "entity.name.function.oneshot" }
+            }
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.oneshot",
+                    "match": "\\b(IF|ELSE|FOR|WHILE|THEN|END|RETURN)\\b"
+                },
+                {
+                    "name": "keyword.operator.logical.oneshot",
+                    "match": "\\b(AND|OR)\\b"
+                },
+                {
+                    "name": "storage.type.oneshot",
+                    "match": "\\b(LET|FUNC)\\b"
+                },
+                {
+                    "name": "constant.language.oneshot",
+                    "match": "\\b(TRUE|FALSE|NULL)\\b"
+                },
+                {
+                    "comment": "Blocks that define sprites and songs",
+                    "name": "storage.type.block.oneshot",
+                    "match": "\\b(SPRITE|FRAME|SONG|SHEET)\\b"
+                },
+                {
+                    "comment": "Statements that take comma-separated arguments",
+                    "name": "keyword.other.command.oneshot",
+                    "match": "\\b(PRINT|DEBUG|SLEEP|WINDOW|COLOR|FILL|TEXT|DRAW|SIZE|COLORDATA|PIXELDATA|BAR|GAIN|TYPE|BPM|LOOP|PLAY|STOP)\\b"
+                },
+                {
+                    "name": "support.function.builtin.oneshot",
+                    "match": "\\b(RANDOM|INPUT|INT|MIN|MAX|ABS|FLOOR|CEIL|LERP|SQRT|SUM|COLLIDE)\\b"
+                },
+                {
+                    "name": "support.variable.builtin.oneshot",
+                    "match": "\\b(MOUSEX|MOUSEY|ALL)\\b"
+                }
+            ]
+        },
+        "function-call": {
+            "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+            "captures": {
+                "1": { "name": "entity.name.function.call.oneshot" }
+            }
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.increment.oneshot",
+                    "match": "\\+\\+|--"
+                },
+                {
+                    "name": "keyword.operator.comparison.oneshot",
+                    "match": "==|<>|<=|>=|<|>"
+                },
+                {
+                    "name": "keyword.operator.assignment.oneshot",
+                    "match": "="
+                },
+                {
+                    "name": "keyword.operator.logical.oneshot",
+                    "match": "!"
+                },
+                {
+                    "name": "keyword.operator.arithmetic.oneshot",
+                    "match": "[-+*/%]"
+                }
+            ]
+        },
+        "punctuation": {
+            "patterns": [
+                { "name": "punctuation.separator.comma.oneshot", "match": "," },
+                { "name": "punctuation.separator.colon.oneshot", "match": ":" },
+                { "name": "punctuation.section.parens.oneshot", "match": "[()]" },
+                { "name": "punctuation.section.brackets.oneshot", "match": "[\\[\\]]" }
+            ]
+        },
+        "variable": {
+            "name": "variable.other.oneshot",
+            "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        }
+    }
+}

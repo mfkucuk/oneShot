@@ -1,0 +1,3 @@
+# Copied from ../oneShot.js when the extension is packaged
+media/oneShot.js
+*.vsix
