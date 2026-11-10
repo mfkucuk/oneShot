@@ -1,5 +1,6 @@
 // Everything the editor knows about the OneShot language: the built-in words with
 // their documentation, and a light scan of a document for the names it declares.
+// nvim-oneshot/lua/oneshot/language.lua is a port of this file, keep the two in sync.
 
 /**
  * @typedef {object} Entry

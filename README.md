@@ -38,6 +38,8 @@ python3 -m http.server
 ## 🖍️Editor Support
 [vscode-oneshot](vscode-oneshot) is a Visual Studio Code extension for `.oneshot` files. It adds highlighting, completion, a panel that runs your game next to the code, and a live preview of your sprites and songs. See its README to install it.
 
+[nvim-oneshot](nvim-oneshot) is a Neovim plugin with highlighting, indentation, completion and hover documentation.
+
 ## 📖Language Reference
 Keywords are upper case. Statements are separated by whitespace, so each one usually goes on its own line. `#` starts a comment.
 
