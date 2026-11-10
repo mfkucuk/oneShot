@@ -45,6 +45,10 @@
                     "match": "\\b(IF|ELSE|FOR|WHILE|THEN|END|RETURN)\\b"
                 },
                 {
+                    "name": "keyword.control.import.oneshot",
+                    "match": "\\bIMPORT\\b"
+                },
+                {
                     "name": "keyword.operator.logical.oneshot",
                     "match": "\\b(AND|OR)\\b"
                 },
@@ -68,7 +72,7 @@
                 },
                 {
                     "name": "support.function.builtin.oneshot",
-                    "match": "\\b(RANDOM|INPUT|INT|MIN|MAX|ABS|FLOOR|CEIL|LERP|SQRT|SUM|COLLIDE)\\b"
+                    "match": "\\b(RANDOM|INPUT|INT|FLOOR|CEIL|SQRT|LEN)\\b"
                 },
                 {
                     "name": "support.variable.builtin.oneshot",

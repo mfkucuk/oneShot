@@ -41,18 +41,6 @@ function isTruthy(value) {
 }
 
 /**
- * Returns true if two axis-aligned rectangles overlap.
- */
-function aabb(x1, y1, w1, h1, x2, y2, w2, h2) {
-    return (
-        x1 < x2 + w2 &&  // Left edge of rect1 is left of the right edge of rect2
-        x1 + w1 > x2 &&  // Right edge of rect1 is right of the left edge of rect2
-        y1 < y2 + h2 &&  // Top edge of rect1 is above the bottom edge of rect2
-        y1 + h1 > y2     // Bottom edge of rect1 is below the top edge of rect2
-    );
-}
-
-/**
  * A short, human readable description of a value's type, for error messages.
  */
 function describe(value) {
@@ -559,11 +547,10 @@ const KEYWORDS = new Set([
     // Keywords
     'AND', 'OR', 'TRUE', 'FALSE', 'NULL',
     'IF', 'ELSE', 'FOR', 'WHILE', 'THEN', 'END',
-    'LET', 'FUNC', 'RETURN', 'ALL',
+    'LET', 'FUNC', 'RETURN', 'ALL', 'IMPORT',
 
     // Built-in values and functions
-    'MOUSEX', 'MOUSEY', 'RANDOM', 'INPUT', 'INT', 'MIN', 'MAX', 'ABS',
-    'FLOOR', 'CEIL', 'LERP', 'SQRT', 'SUM', 'COLLIDE',
+    'MOUSEX', 'MOUSEY', 'RANDOM', 'INPUT', 'INT', 'FLOOR', 'CEIL', 'SQRT', 'LEN',
 
     // Commands
     'DEBUG', 'PRINT', 'WINDOW', 'COLOR', 'FILL', 'TEXT', 'SLEEP', 'DRAW',
@@ -831,6 +818,8 @@ class Runtime {
      * @param {(message: any) => void} onPrint
      */
     constructor(canvas, onPrint) {
+        /** @type {Set<string>} Libraries this run has imported */
+        this.imported = new Set();
         this.canvas = canvas;
         this.ctx = canvas?.getContext('2d') ?? null;
         this.onPrint = onPrint;
@@ -973,6 +962,11 @@ class Environment {
             }
         }
 
+        const library = LIBRARY_OF.get(name);
+        if (library) {
+            throw new OneShotError(`${name} is in the ${library} library. Add IMPORT ${library} at the top of the program`);
+        }
+
         throw new OneShotError(`Undefined variable: ${name}`);
     }
 
@@ -1005,6 +999,7 @@ async function executeStatements(statements, environment) {
         } catch (error) {
             if (error instanceof Error && error.line === undefined) {
                 error.line = statement.line;
+                error.file = statement.file;
             }
             throw error;
         }
@@ -1324,25 +1319,25 @@ const BUILTINS = new Map([
     ['RANDOM',  { arity: 0, call: () => Math.random() }],
     ['INPUT',   { arity: 1, call: key => input.isDown(key) }],
     ['INT',     { arity: 1, call: value => Math.trunc(Number(value)) }],
-    ['MIN',     { arity: 2, numeric: true, call: Math.min }],
-    ['MAX',     { arity: 2, numeric: true, call: Math.max }],
-    ['ABS',     { arity: 1, numeric: true, call: Math.abs }],
     ['FLOOR',   { arity: 1, numeric: true, call: Math.floor }],
     ['CEIL',    { arity: 1, numeric: true, call: Math.ceil }],
     ['SQRT',    { arity: 1, numeric: true, call: Math.sqrt }],
-    ['LERP',    { arity: 3, numeric: true, call: (a, b, t) => a + (b - a) * t }],
-    ['COLLIDE', { arity: 8, numeric: true, call: aabb }],
-    ['SUM',     { arity: 1, call: array => {
-        if (!Array.isArray(array)) {
-            throw new OneShotError(`SUM expects an array, got ${describe(array)}`);
+    ['LEN',     { arity: 1, call: value => {
+        if (!Array.isArray(value) && typeof value !== 'string') {
+            throw new OneShotError(`LEN expects an array or a text, got ${describe(value)}`);
         }
 
-        let sum = 0;
-        for (const value of array) {
-            sum += value;
-        }
-        return sum;
+        return value.length;
     } }],
+]);
+
+/**
+ * Functions that used to be built in and now live in a library, so a program
+ * that forgets to import them gets a helpful error.
+ */
+const LIBRARY_OF = new Map([
+    ...['MIN', 'MAX', 'ABS', 'LERP', 'SUM'].map(name => [name, 'math']),
+    ['COLLIDE', 'geometry'],
 ]);
 
 /**
@@ -1597,6 +1592,73 @@ class FunctionStatement extends Statement {
     }
 }
 
+/**
+ * IMPORT math runs lib/math.oneshot once per run, in the global scope,
+ * so the functions and variables it declares can be used everywhere.
+ */
+class ImportStatement extends Statement {
+    /**
+     * @param {Token} name
+     */
+    constructor(name) {
+        super();
+        this.name = name;
+    }
+
+    async execute(environment) {
+        const runtime = environment.runtime;
+        const name = this.name.lexeme.toLowerCase();
+
+        // Importing twice, or two libraries importing each other, runs each library once
+        if (runtime.imported.has(name)) {
+            return;
+        }
+        runtime.imported.add(name);
+
+        const file = `${name}.oneshot`;
+        const source = await loadLibrary(name);
+
+        let statements;
+        try {
+            const tokens = new Scanner(source).scanTokens();
+            statements = new Parser(tokens, file).parse();
+        } catch (error) {
+            error.file ??= file;
+            throw error;
+        }
+
+        await executeStatements(statements, runtime.globals);
+    }
+}
+
+/**
+ * Folder of the libraries: lib/ next to oneShot.js, unless a page sets `OneShot.libraryUrl`
+ */
+let libraryUrl = typeof document !== 'undefined' && document.currentScript
+    ? new URL('lib/', document.currentScript.src).href
+    : 'lib/';
+
+/**
+ * Reads the source code of lib/[name].oneshot
+ * @param {string} name Lower case library name
+ */
+async function loadLibrary(name) {
+    const url = new URL(`${name}.oneshot`, new URL(libraryUrl, globalThis.location?.href)).href;
+
+    let response;
+    try {
+        response = await fetch(url);
+    } catch {
+        throw new OneShotError(`Could not load the library ${name}. Libraries can only be loaded when the page is served over http`);
+    }
+
+    if (!response.ok) {
+        throw new OneShotError(`There is no library called ${name}`);
+    }
+
+    return await response.text();
+}
+
 class ReturnStatement extends Statement {
     /**
      * @param {Expression?} value
@@ -1800,11 +1862,16 @@ class Parser {
     #tokens;
     #current = 0;
 
+    /** File name of a library, used in error messages. Undefined for the main program. */
+    #file;
+
     /**
      * @param {Token[]} tokens
+     * @param {string} [file]
      */
-    constructor(tokens) {
+    constructor(tokens, file) {
         this.#tokens = tokens;
+        this.#file = file;
     }
 
     parse() {
@@ -1825,11 +1892,14 @@ class Parser {
             statement = this.#funcDeclaration();
         } else if (this.#match(TokenType.LET)) {
             statement = this.#letDeclaration();
+        } else if (this.#match(TokenType.IMPORT)) {
+            statement = new ImportStatement(this.#consume(TokenType.IDENTIFIER, 'Expected a library name after IMPORT, like IMPORT math'));
         } else {
             statement = this.#statement();
         }
 
         statement.line = line;
+        statement.file = this.#file;
         return statement;
     }
 
@@ -2251,7 +2321,20 @@ class OneShot {
      * @param {Error} error
      */
     static formatError(error) {
-        return error.line !== undefined ? `[Line ${error.line}] ${error.message}` : error.message;
+        if (error.line === undefined) {
+            return error.file ? `[${error.file}] ${error.message}` : error.message;
+        }
+
+        return error.file ? `[${error.file}, line ${error.line}] ${error.message}` : `[Line ${error.line}] ${error.message}`;
+    }
+
+    /** URL of the folder IMPORT loads libraries from. By default it is lib/ next to oneShot.js. */
+    static get libraryUrl() {
+        return libraryUrl;
+    }
+
+    static set libraryUrl(url) {
+        libraryUrl = url.endsWith('/') ? url : `${url}/`;
     }
 
     /**

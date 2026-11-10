@@ -1,5 +1,7 @@
 # A tail that follows the mouse. Every segment moves part of the way
 # towards the one in front of it with LERP, which makes the motion smooth.
+IMPORT math
+
 WINDOW 320, 240
 
 LET SEGMENTS = 25

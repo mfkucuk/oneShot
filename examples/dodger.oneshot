@@ -1,5 +1,7 @@
 # Dodger: dodge the falling rocks for as long as you can.
 # Move with A / D or the arrow keys. Press R to play again.
+IMPORT math
+IMPORT geometry
 
 SPRITE "SHIP"
     SIZE 7, 6

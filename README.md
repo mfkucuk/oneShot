@@ -58,7 +58,7 @@ Operators, from the lowest precedence to the highest: `OR`, `AND`, `==` `<>`, `<
 ```
 LET ITEMS[10]          # 10 elements, all NULL
 ITEMS[0] = 42
-PRINT ITEMS[0] + SUM(ITEMS)
+PRINT ITEMS[0] + LEN(ITEMS)
 ```
 Arrays are references: assigning one to another variable, or passing it to a function, does not copy it.
 
@@ -96,11 +96,24 @@ PRINT ADD(1, 2)
 | `INPUT(key)` | `TRUE` while a key is held, e.g. `"W"`, `"ARROWUP"`, `"ESCAPE"`, `" "` for space |
 | `MOUSEX`, `MOUSEY` | Mouse position on the canvas (no parentheses) |
 | `INT(x)` | `x` as a whole number, also converts text like `"42"` |
-| `MIN(a, b)`, `MAX(a, b)`, `ABS(x)` | The usual |
 | `FLOOR(x)`, `CEIL(x)`, `SQRT(x)` | The usual |
-| `LERP(a, b, t)` | The value `t` of the way from `a` to `b` |
-| `SUM(array)` | The sum of all elements |
-| `COLLIDE(x1, y1, w1, h1, x2, y2, w2, h2)` | `TRUE` if two rectangles overlap |
+| `LEN(value)` | The number of elements of an array, or characters of a text |
+
+Everything else, like `MIN`, `MAX` and `COLLIDE`, is written in OneShot and comes from a library.
+
+### Libraries
+```
+IMPORT math
+PRINT GCD(84, 36)
+```
+`IMPORT name` runs `lib/name.oneshot` from the `lib` folder next to `oneShot.js`. The library's functions and variables then become global. Each library runs only once per program, however many times it is imported. Libraries are loaded with `fetch`, so the page has to be served over http.
+
+| Library | Gives you |
+| --- | --- |
+| `math` | `PI`, `MIN(a, b)`, `MAX(a, b)`, `ABS(x)`, `SIGN(x)`, `CLAMP(value, low, high)`, `ROUND(x)`, `LERP(a, b, t)`, `SUM(array)`, `GCD(a, b)`, `LCM(a, b)`, `POW(base, exponent)`, `FACTORIAL(n)` |
+| `geometry` | `COLLIDE(x1, y1, w1, h1, x2, y2, w2, h2)`, `INSIDE(x, y, left, top, width, height)`, `DISTANCE(x1, y1, x2, y2)` |
+
+To add a library, put a `.oneshot` file in `lib/`.
 
 ### Commands
 | Command | Effect |

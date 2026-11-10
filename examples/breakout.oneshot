@@ -1,5 +1,8 @@
 # Breakout: bounce the ball off the paddle to clear every brick.
 # Move with the mouse, A / D or the arrow keys. SPACE launches the ball.
+IMPORT math
+IMPORT geometry
+
 WINDOW 320, 240
 
 # Bricks

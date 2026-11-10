@@ -21,6 +21,7 @@ const ENTRIES = [
     { name: 'THEN', kind: 'keyword', signature: 'THEN ... END', doc: 'Starts a block. On its own, `THEN ... END` is a block with its own scope.' },
     { name: 'END', kind: 'keyword', signature: 'END', doc: 'Closes a block.' },
     { name: 'FUNC', kind: 'keyword', signature: 'FUNC NAME(params) THEN ... END', doc: 'Declares a function. Functions are values, can be recursive and remember the variables around them.', snippet: 'FUNC ${1:NAME}(${2}) THEN\n\t$0\nEND' },
+    { name: 'IMPORT', kind: 'keyword', signature: 'IMPORT library', doc: 'Runs a library from the `lib` folder once, so its functions and variables can be used, like `IMPORT math` for `lib/math.oneshot`.', snippet: 'IMPORT ${1:math}' },
     { name: 'RETURN', kind: 'keyword', signature: 'RETURN (value)\nRETURN ()', doc: 'Leaves the function, returning `value`. The parentheses are required.', snippet: 'RETURN (${1})' },
     { name: 'AND', kind: 'keyword', signature: 'a AND b', doc: 'Logical and. The right side is only evaluated when the left side is truthy.' },
     { name: 'OR', kind: 'keyword', signature: 'a OR b', doc: 'Logical or. The right side is only evaluated when the left side is falsy.' },
@@ -33,15 +34,10 @@ const ENTRIES = [
     { name: 'RANDOM', kind: 'function', signature: 'RANDOM() → number', doc: 'A random number from 0 up to (but not including) 1.', snippet: 'RANDOM()' },
     { name: 'INPUT', kind: 'function', signature: 'INPUT(key) → boolean', doc: '`TRUE` while the key is held down, e.g. `"W"`, `"ARROWUP"`, `"ESCAPE"` or `" "` for space. A quick tap counts as held until the next `SLEEP`.', snippet: 'INPUT("${1:W}")' },
     { name: 'INT', kind: 'function', signature: 'INT(value) → number', doc: 'The value as a whole number, dropping the fraction. Also converts text like `"42"`.', snippet: 'INT(${1:value})' },
-    { name: 'MIN', kind: 'function', signature: 'MIN(a, b) → number', doc: 'The smaller of two numbers.', snippet: 'MIN(${1:a}, ${2:b})' },
-    { name: 'MAX', kind: 'function', signature: 'MAX(a, b) → number', doc: 'The larger of two numbers.', snippet: 'MAX(${1:a}, ${2:b})' },
-    { name: 'ABS', kind: 'function', signature: 'ABS(x) → number', doc: 'The absolute value.', snippet: 'ABS(${1:x})' },
     { name: 'FLOOR', kind: 'function', signature: 'FLOOR(x) → number', doc: 'Rounds down to a whole number.', snippet: 'FLOOR(${1:x})' },
     { name: 'CEIL', kind: 'function', signature: 'CEIL(x) → number', doc: 'Rounds up to a whole number.', snippet: 'CEIL(${1:x})' },
     { name: 'SQRT', kind: 'function', signature: 'SQRT(x) → number', doc: 'The square root.', snippet: 'SQRT(${1:x})' },
-    { name: 'LERP', kind: 'function', signature: 'LERP(a, b, t) → number', doc: 'The value `t` of the way from `a` to `b`: `LERP(0, 100, 0.25)` is 25. Great for smooth movement.', snippet: 'LERP(${1:a}, ${2:b}, ${3:t})' },
-    { name: 'SUM', kind: 'function', signature: 'SUM(array) → number', doc: 'The sum of all elements of an array.', snippet: 'SUM(${1:array})' },
-    { name: 'COLLIDE', kind: 'function', signature: 'COLLIDE(x1, y1, w1, h1, x2, y2, w2, h2) → boolean', doc: '`TRUE` if two rectangles overlap.', snippet: 'COLLIDE(${1:x1}, ${2:y1}, ${3:w1}, ${4:h1}, ${5:x2}, ${6:y2}, ${7:w2}, ${8:h2})' },
+    { name: 'LEN', kind: 'function', signature: 'LEN(value) → number', doc: 'The number of elements of an array, or of characters of a text.', snippet: 'LEN(${1:array})' },
     { name: 'MOUSEX', kind: 'value', signature: 'MOUSEX → number', doc: 'The horizontal mouse position on the canvas, in canvas pixels. Used without parentheses.' },
     { name: 'MOUSEY', kind: 'value', signature: 'MOUSEY → number', doc: 'The vertical mouse position on the canvas, in canvas pixels. Used without parentheses.' },
 
@@ -122,18 +118,34 @@ function scanDocument(text) {
     const bare = code.replace(/"[^"]*"/g, match => `"${' '.repeat(match.length - 2)}"`);
     const lineOf = index => bare.slice(0, index).split('\n').length - 1;
 
+    const lines = text.split(/\r?\n/);
+
+    // The # comment lines right above a FUNC document it
+    const commentAbove = line => {
+        const comments = [];
+        for (let i = line - 1; i >= 0 && /^\s*#/.test(lines[i]); i--) {
+            comments.unshift(lines[i].replace(/^\s*#\s?/, ''));
+        }
+        return comments.join(' ');
+    };
+
     const functions = [];
     for (const match of bare.matchAll(/\bFUNC\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g)) {
         const params = match[2].split(',').map(param => param.trim()).filter(Boolean);
-        functions.push({ name: match[1], params, line: lineOf(match.index) });
+        const line = lineOf(match.index);
+        functions.push({ name: match[1], params, line, doc: commentAbove(line) });
     }
 
     const variables = new Map();
     for (const match of bare.matchAll(/\bLET\s+([A-Za-z_]\w*)\s*(\[)?/g)) {
         if (!variables.has(match[1])) {
-            variables.set(match[1], { name: match[1], isArray: Boolean(match[2]), line: lineOf(match.index) });
+            // Libraries only share the variables declared at the start of a line, outside of blocks
+            const topLevel = /(^|\n)$/.test(bare.slice(0, match.index));
+            variables.set(match[1], { name: match[1], isArray: Boolean(match[2]), line: lineOf(match.index), topLevel });
         }
     }
+
+    const imports = [...bare.matchAll(/\bIMPORT\s+([A-Za-z_]\w*)/g)].map(match => match[1].toLowerCase());
     for (const fn of functions) {
         for (const param of fn.params) {
             if (!variables.has(param)) {
@@ -160,7 +172,7 @@ function scanDocument(text) {
         }
     }
 
-    return { functions, variables: [...variables.values()], sprites, songs };
+    return { functions, variables: [...variables.values()], sprites, songs, imports };
 }
 
 module.exports = { ENTRIES, ENTRIES_BY_NAME, SNIPPETS, KEY_NAMES, WAVE_TYPES, COLORS, scanDocument };

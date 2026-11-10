@@ -1,7 +1,58 @@
 // Completion and hover for OneShot
 
 const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
 const { ENTRIES, ENTRIES_BY_NAME, SNIPPETS, KEY_NAMES, WAVE_TYPES, COLORS, scanDocument } = require('./language');
+
+/**
+ * The libraries IMPORT can load: the repository's lib folder, or the copy in media/ of a packaged extension
+ */
+const LIBRARY_FOLDER = [path.join(__dirname, '..', '..', 'lib'), path.join(__dirname, '..', 'media', 'lib')]
+    .find(folder => fs.existsSync(folder));
+
+/** Names of the available libraries, like "math" */
+function libraryNames() {
+    if (!LIBRARY_FOLDER) {
+        return [];
+    }
+
+    return fs.readdirSync(LIBRARY_FOLDER)
+        .filter(file => file.endsWith('.oneshot'))
+        .map(file => file.slice(0, -'.oneshot'.length));
+}
+
+/**
+ * Scans a document, adding the functions and global variables of the libraries it imports.
+ * Imported names have a `library` property.
+ * @param {vscode.TextDocument} document
+ */
+function scanWithImports(document) {
+    const scan = scanDocument(document.getText());
+
+    for (const library of new Set(scan.imports)) {
+        let text;
+        try {
+            text = fs.readFileSync(path.join(LIBRARY_FOLDER ?? '', `${library}.oneshot`), 'utf8');
+        } catch {
+            continue;
+        }
+
+        const libraryScan = scanDocument(text);
+        for (const fn of libraryScan.functions) {
+            if (!scan.functions.some(own => own.name === fn.name)) {
+                scan.functions.push({ ...fn, library });
+            }
+        }
+        for (const variable of libraryScan.variables) {
+            if (variable.topLevel && !scan.variables.some(own => own.name === variable.name)) {
+                scan.variables.push({ ...variable, library });
+            }
+        }
+    }
+
+    return scan;
+}
 
 const ENTRY_KINDS = {
     keyword: vscode.CompletionItemKind.Keyword,
@@ -94,6 +145,14 @@ const completionProvider = {
             return stringCompletions(document, position, linePrefix);
         }
 
+        if (/\bIMPORT\s+\w*$/.test(linePrefix)) {
+            return libraryNames().map(name => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
+                item.detail = `lib/${name}.oneshot`;
+                return item;
+            });
+        }
+
         return codeCompletions(document);
     },
 };
@@ -120,13 +179,16 @@ function stringCompletions(document, position, linePrefix) {
 }
 
 function codeCompletions(document) {
-    const scan = scanDocument(document.getText());
+    const scan = scanWithImports(document);
     const items = [];
 
-    // The program's own names come first
+    // The program's own names, and the names it imports, come first
     for (const fn of scan.functions) {
         const item = new vscode.CompletionItem(fn.name, vscode.CompletionItemKind.Function);
-        item.detail = `FUNC ${fn.name}(${fn.params.join(', ')})`;
+        item.detail = `FUNC ${fn.name}(${fn.params.join(', ')})${fn.library ? ` from ${fn.library}` : ''}`;
+        if (fn.doc) {
+            item.documentation = new vscode.MarkdownString(fn.doc);
+        }
         item.insertText = new vscode.SnippetString(`${fn.name}(${fn.params.map((param, i) => `\${${i + 1}:${param}}`).join(', ')})`);
         item.sortText = `0${fn.name}`;
         items.push(item);
@@ -141,7 +203,7 @@ function codeCompletions(document) {
         if (variable.parameterOf) {
             item.detail = `Parameter of ${variable.parameterOf}`;
         } else {
-            item.detail = variable.isArray ? `LET ${variable.name}[...]` : `LET ${variable.name}`;
+            item.detail = (variable.isArray ? `LET ${variable.name}[...]` : `LET ${variable.name}`) + (variable.library ? ` from ${variable.library}` : '');
         }
         item.sortText = `0${variable.name}`;
         items.push(item);
@@ -188,12 +250,15 @@ const hoverProvider = {
             return new vscode.Hover(entryDocumentation(entry), range);
         }
 
-        const scan = scanDocument(document.getText());
+        const scan = scanWithImports(document);
+        const declaredAt = item => item.library ? `From the ${item.library} library` : `Declared on line ${item.line + 1}`;
+
         const fn = scan.functions.find(fn => fn.name === word);
         if (fn) {
             const markdown = new vscode.MarkdownString()
                 .appendCodeblock(`FUNC ${fn.name}(${fn.params.join(', ')})`, 'oneshot')
-                .appendMarkdown(`Declared on line ${fn.line + 1}`);
+                .appendMarkdown(fn.doc ? `${fn.doc}\n\n` : '')
+                .appendMarkdown(declaredAt(fn));
             return new vscode.Hover(markdown, range);
         }
 
@@ -204,7 +269,7 @@ const hoverProvider = {
                 markdown.appendMarkdown(`Parameter of \`${variable.parameterOf}\``);
             } else {
                 markdown.appendCodeblock(variable.isArray ? `LET ${word}[...]` : `LET ${word}`, 'oneshot')
-                    .appendMarkdown(`Declared on line ${variable.line + 1}`);
+                    .appendMarkdown(declaredAt(variable));
             }
             return new vscode.Hover(markdown, range);
         }

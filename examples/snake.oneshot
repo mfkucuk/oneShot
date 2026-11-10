@@ -1,5 +1,7 @@
 # Snake: eat the red food to grow, and don't hit the walls or yourself.
 # Steer with the arrow keys or WASD. Press R to restart.
+IMPORT math
+
 LET CELL = 16
 LET COLS = 20
 LET ROWS = 15

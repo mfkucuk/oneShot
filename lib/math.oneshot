@@ -1,0 +1,102 @@
+# The math library. Use it with: IMPORT math
+
+LET PI = 3.141592653589793
+
+# The smaller of two numbers
+FUNC MIN(A, B) THEN
+    IF (A < B) THEN
+        RETURN (A)
+    END
+    RETURN (B)
+END
+
+# The larger of two numbers
+FUNC MAX(A, B) THEN
+    IF (A > B) THEN
+        RETURN (A)
+    END
+    RETURN (B)
+END
+
+# The distance of a number from zero: ABS(-3) is 3
+FUNC ABS(X) THEN
+    IF (X < 0) THEN
+        RETURN (-X)
+    END
+    RETURN (X)
+END
+
+# -1 for negative numbers, 1 for positive numbers and 0 for zero
+FUNC SIGN(X) THEN
+    IF (X < 0) THEN
+        RETURN (-1)
+    END
+    IF (X > 0) THEN
+        RETURN (1)
+    END
+    RETURN (0)
+END
+
+# Keep a value between a lower and an upper bound
+FUNC CLAMP(VALUE, LOW, HIGH) THEN
+    RETURN (MAX(LOW, MIN(HIGH, VALUE)))
+END
+
+# Round to the nearest whole number
+FUNC ROUND(X) THEN
+    RETURN (FLOOR(X + 0.5))
+END
+
+# The value T of the way from A to B: LERP(0, 100, 0.25) is 25. Great for smooth movement.
+FUNC LERP(A, B, T) THEN
+    RETURN (A + (B - A) * T)
+END
+
+# The sum of all elements of an array
+FUNC SUM(ARRAY) THEN
+    LET TOTAL = 0
+    FOR (LET I = 0 : I < LEN(ARRAY) : I++) THEN
+        TOTAL = TOTAL + ARRAY[I]
+    END
+    RETURN (TOTAL)
+END
+
+# Greatest common divisor, with Euclid's algorithm
+FUNC GCD(A, B) THEN
+    IF (B == 0) THEN
+        RETURN (ABS(A))
+    END
+    RETURN (GCD(B, A % B))
+END
+
+# Least common multiple
+FUNC LCM(A, B) THEN
+    IF (A == 0 OR B == 0) THEN
+        RETURN (0)
+    END
+    RETURN (ABS(A / GCD(A, B) * B))
+END
+
+# BASE to the power of a whole EXPONENT, by repeated squaring
+FUNC POW(BASE, EXPONENT) THEN
+    IF (EXPONENT < 0) THEN
+        RETURN (1 / POW(BASE, -EXPONENT))
+    END
+    IF (EXPONENT == 0) THEN
+        RETURN (1)
+    END
+    LET HALF = POW(BASE, FLOOR(EXPONENT / 2))
+    IF (EXPONENT % 2 == 0) THEN
+        RETURN (HALF * HALF)
+    END
+    RETURN (HALF * HALF * BASE)
+END
+
+# Factorial of a whole number: N * (N - 1) * ... * 1
+FUNC FACTORIAL(N) THEN
+    LET RESULT = 1
+    FOR (LET I = 2 : I <= N : I++) THEN
+        RESULT = RESULT * I
+    END
+    RETURN (RESULT)
+END

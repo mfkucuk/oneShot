@@ -1,5 +1,7 @@
 # A parallax starfield: far stars are dim and slow, near stars are bright and fast.
 # Hold the arrow keys to speed up or slow down.
+IMPORT math
+
 WINDOW 320, 240
 
 LET COUNT = 120

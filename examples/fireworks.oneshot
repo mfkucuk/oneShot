@@ -1,6 +1,8 @@
 # Fireworks: a particle system. Particles live in a pool of arrays,
 # and new particles reuse the slot of the oldest one.
 # Press SPACE to launch extra rockets.
+IMPORT math
+
 WINDOW 320, 240
 
 LET COUNT = 300

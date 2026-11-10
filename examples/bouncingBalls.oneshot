@@ -1,4 +1,6 @@
 # Bouncing balls: arrays hold the position, speed, size and color of every ball
+IMPORT math
+
 WINDOW 320, 240
 
 LET COUNT = 15

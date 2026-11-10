@@ -1,4 +1,6 @@
 # Arrays: LET NAME[SIZE] makes an array filled with NULL
+IMPORT math
+
 LET COUNT = 8
 LET SCORES[COUNT]
 

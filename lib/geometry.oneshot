@@ -1,0 +1,16 @@
+# The geometry library: positions, distances and collisions. Use it with: IMPORT geometry
+
+# TRUE if two rectangles overlap. Each one is given as its left, top, width and height.
+FUNC COLLIDE(X1, Y1, W1, H1, X2, Y2, W2, H2) THEN
+    RETURN (X1 < X2 + W2 AND X1 + W1 > X2 AND Y1 < Y2 + H2 AND Y1 + H1 > Y2)
+END
+
+# TRUE if the point (X, Y) is inside the rectangle
+FUNC INSIDE(X, Y, LEFT, TOP, WIDTH, HEIGHT) THEN
+    RETURN (X >= LEFT AND X < LEFT + WIDTH AND Y >= TOP AND Y < TOP + HEIGHT)
+END
+
+# Distance between the points (X1, Y1) and (X2, Y2)
+FUNC DISTANCE(X1, Y1, X2, Y2) THEN
+    RETURN (SQRT((X2 - X1) * (X2 - X1) + (Y2 - Y1) * (Y2 - Y1)))
+END

@@ -6,6 +6,8 @@
 #
 # P plays the song, S stops it and SPACE plays a sound effect.
 # (This melody is the Russian folk song Korobeiniki.)
+IMPORT math
+
 
 SONG "THEME"
     BPM 300

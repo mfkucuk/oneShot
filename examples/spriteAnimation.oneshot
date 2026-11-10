@@ -2,6 +2,8 @@
 # PIXELDATA adds one row of pixels, and every character is drawn 4x4 pixels big.
 # A sprite can have many FRAMEs, drawn by name or by index.
 # Walk around with WASD or the arrow keys.
+IMPORT math
+
 
 SPRITE "HERO"
     SIZE 8, 8

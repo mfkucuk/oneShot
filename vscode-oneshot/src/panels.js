@@ -8,7 +8,8 @@ const path = require('path');
 /**
  * Finds oneShot.js. Inside the OneShot repository the extension uses the repository's own
  * interpreter, so it is always up to date. A packaged extension uses the copy that
- * `npm run vscode:prepublish` puts in media/.
+ * `npm run vscode:prepublish` puts in media/. IMPORT loads libraries from the lib/ folder
+ * next to it, which the webview can read because it is inside the folder of oneShot.js.
  * @param {string} extensionPath
  */
 function findInterpreter(extensionPath) {
@@ -55,7 +56,7 @@ class InterpreterPanel {
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; connect-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="${uri(path.join(mediaFolder, 'style.css'))}">
     <title>${title}</title>

@@ -1,3 +1,5 @@
+IMPORT geometry
+
 # Global variables
 LET BALLSIZE = 8
 LET BALLXSPEED = 2
